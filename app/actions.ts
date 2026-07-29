@@ -875,6 +875,9 @@ export async function logMfTransaction(input: {
  * legitimate "two separate purchases of the same fund on the same
  * day" case as "already on file" (already an accepted trade-off of
  * the hash design itself — see computeMfTxHash's doc comment).
+ *
+ * Studio TEST MODE rows (platform='test') are excluded — they are
+ * rehearsal writes and must not block a real INDmoney paste.
  */
 export async function checkExistingMfTx(
   candidates: Array<{
@@ -894,9 +897,16 @@ export async function checkExistingMfTx(
   const fundCodes = Array.from(new Set(candidates.map((c) => c.fund_code)));
   const dates = candidates.map((c) => c.tx_date).sort();
 
+  // Exclude Studio TEST MODE rows (platform='test'). Those are rehearsal
+  // writes that intentionally skip fund_holdings / nw_daily bumps — but
+  // they still land in mf_transactions. If we let them participate in
+  // the weak-key check, a real INDmoney order for the same fund+date
+  // shows "Fund+date already used" and auto-unchecks, so the genuine
+  // trade never gets logged (and holdings drift vs the broker by that
+  // amount). Strong-key (TxnID) matching is unaffected.
   const res = await sbServer
     .from("mf_transactions")
-    .select("fund_code,tx_date,tx_type,amount,units,source")
+    .select("fund_code,tx_date,tx_type,amount,units,source,platform")
     .in("fund_code", fundCodes)
     .gte("tx_date", dates[0])
     .lte("tx_date", dates[dates.length - 1]);
@@ -908,6 +918,7 @@ export async function checkExistingMfTx(
     amount: number | string;
     units: number | string;
     source: string;
+    platform: string | null;
   }>;
 
   for (const c of candidates) {
@@ -916,7 +927,8 @@ export async function checkExistingMfTx(
       (r) =>
         r.fund_code === c.fund_code &&
         r.tx_date === c.tx_date &&
-        r.tx_type === c.tx_type
+        r.tx_type === c.tx_type &&
+        r.platform !== "test"
     );
     result[key] = match
       ? {

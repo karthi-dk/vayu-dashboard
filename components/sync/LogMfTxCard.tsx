@@ -1216,7 +1216,7 @@ function BulkReviewTable({
                   {r.submitState === "idle" && r.existingMatch?.matchedBy === "weak_key" && (
                     <span
                       className="text-[hsl(var(--warning))]"
-                      title={`Same fund+date+type exists but this order's TxnID isn't tagged on the existing row (source=${r.existingMatch.source}, ${fmtINR(r.existingMatch.amount)}, ${r.existingMatch.units.toFixed(4)} units). Likely the same trade; verify before re-checking.`}
+                      title={`Same fund+date+type exists but this order's TxnID isn't tagged on the existing row (source=${r.existingMatch.source}, ${fmtINR(r.existingMatch.amount)}, ${r.existingMatch.units.toFixed(4)} units). Likely the same trade; verify before re-checking. Studio platform=test rows are ignored by this check.`}
                     >
                       Fund+date already used · {fmtINR(r.existingMatch.amount)}
                     </span>
