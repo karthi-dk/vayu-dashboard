@@ -1,0 +1,704 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Dark theme is the default — kept on :root so users without a saved
+     preference (fresh visitors, private mode where localStorage is
+     blocked) get the design's intended look immediately. */
+  :root {
+    --radius: 0.75rem;
+
+    --background: 240 20% 4%;
+    --foreground: 240 5% 92%;
+
+    --card: 240 20% 8%;
+    --card-foreground: 240 5% 92%;
+
+    /* Popover / tooltip surface — one step above card so tooltips remain
+       legible when they overlap chart shapes or card backgrounds. */
+    --popover: 240 20% 11%;
+    --popover-foreground: 240 5% 96%;
+
+    --muted: 240 15% 15%;
+    --muted-foreground: 240 5% 55%;
+
+    --border: 240 15% 15%;
+    --input: 240 20% 12%;
+
+    --primary: 248 85% 72%;
+    --primary-foreground: 240 20% 4%;
+
+    --accent: 240 15% 15%;
+    --accent-foreground: 240 5% 92%;
+
+    --success: 142 71% 55%;
+    --danger: 350 89% 60%;
+    --warning: 38 92% 60%;
+
+    /* LiquidityCard accents. Kept distinct from primary/warning so the
+       card doesn't visually collide with EquityDebtCard when they sit
+       side-by-side.
+         --liquid → cyan/sky, semantically "flowing / accessible"
+         --locked → warm sepia, semantically "earthy / reserved-till-later"
+       Together they read as a cool/warm complementary pair. */
+    --liquid: 195 82% 58%;
+    --locked: 28 48% 58%;
+  }
+
+  /* Light theme. Activated by <html data-theme="light">. Values chosen
+     to preserve the design's identity: same violet-tinted neutrals
+     (240 hue family) just inverted in lightness, and the accent colors
+     (success/danger/warning/primary) shifted 15-20% darker so they hold
+     contrast against a white background. */
+  [data-theme="light"] {
+    --background: 240 20% 99%;
+    --foreground: 240 20% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 20% 10%;
+
+    /* Popover / tooltip surface for light mode. Same as card (pure white)
+       so overlays float cleanly on the tinted background canvas. */
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 20% 10%;
+
+    --muted: 240 15% 95%;
+    --muted-foreground: 240 5% 40%;
+
+    --border: 240 15% 88%;
+    --input: 240 20% 96%;
+
+    --primary: 248 75% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --accent: 240 15% 94%;
+    --accent-foreground: 240 20% 10%;
+
+    --success: 142 71% 36%;
+    --danger: 350 82% 48%;
+    --warning: 38 92% 42%;
+
+    /* Light-theme LiquidityCard accents — darker for contrast on white. */
+    --liquid: 195 78% 40%;
+    --locked: 28 58% 40%;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html {
+    background-color: hsl(var(--background));
+  }
+}
+
+@layer utilities {
+  .kicker {
+    @apply text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/*
+ * Studio click pulse — a coordinate-anchored ring that flashes at
+ * the tap location on every interactive gesture inside /studio, so
+ * taps read on-camera during video recording (mobile screen
+ * recorders don't render the OS "show touches" indicator by default,
+ * and even when they do the styling isn't tunable). Mounted by
+ * <StudioClickPulse />, which spawns one <div> per tap and removes
+ * it after the animation ends.
+ *
+ * The element is positioned via inline style at the pointer's
+ * clientX/clientY, then transform: translate(-50%, -50%) centres
+ * the ring on that point. The scale grows and opacity fades over
+ * ~500ms, ease-out, so the wave "expands" outward from the tap
+ * point — the same visual grammar as Material Design's ripple.
+ *
+ * The layered ring (border) + subtle fill (background) reads on
+ * BOTH light and dark backgrounds:
+ *   • On light bg the fill provides the visible mass.
+ *   • On dark bg the border cuts through.
+ * Both use the app's primary colour for theme consistency.
+ *
+ * IMPORTANT: keyframes keep the translate portion of the transform
+ * on every keyframe. CSS animations REPLACE the transform property
+ * (they don't merge with the element's static transform), so if
+ * translate() were only in the base rule the scale keyframes would
+ * strip the centering and the ring would grow from the top-left
+ * corner instead of the tap point.
+ */
+.studio-click-pulse {
+  position: fixed;
+  width: 60px;
+  height: 60px;
+  border-radius: 9999px;
+  border: 2px solid hsl(var(--primary));
+  background: hsl(var(--primary) / 0.12);
+  transform: translate(-50%, -50%) scale(0);
+  pointer-events: none;
+  /* Very high z-index so the ring sits above modals, dropdowns,
+     the celebration overlay, everything. It should never be
+     visually occluded during the ~500ms it lives. */
+  z-index: 9999;
+  animation: studio-click-pulse-expand 500ms ease-out forwards;
+  /* will-change hint tells the compositor to promote this to its
+     own layer so the scale/opacity animation runs on the GPU and
+     doesn't trigger paint on every frame. */
+  will-change: transform, opacity;
+}
+
+@keyframes studio-click-pulse-expand {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.8);
+    opacity: 0;
+  }
+}
+
+/* Accessibility: users who've asked for reduced motion at the OS
+ * level get no ring. StudioClickPulse ALSO checks
+ * prefers-reduced-motion in JS to avoid spawning the DOM node at
+ * all, but this CSS guard is a belt-and-braces backstop in case
+ * that check somehow misses. */
+@media (prefers-reduced-motion: reduce) {
+  .studio-click-pulse {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * /studio/neumorphic PROTOTYPE THEME
+ *
+ * Additive-only scope class used by app/studio/neumorphic/page.tsx.
+ * Applied to a wrapper div; all descendants get the neumorphic
+ * palette via CSS custom-property overrides. Scoped exclusively
+ * to `.studio-neumorphic-scope`, so nothing else in the app is
+ * affected.
+ *
+ * WHY THIS SHAPE
+ * --------------
+ * Vayu's child components (DailyProgressCard, StatsRow, and the
+ * value pill in GrowthChart) use Tailwind classes that resolve to
+ * `hsl(var(--background))`, `hsl(var(--foreground))` etc. By
+ * overriding those variables inside a scope class, the reveal
+ * screen picks up the neumorphic palette WITHOUT needing to clone
+ * ~1000 LoC of chart / progress / stats logic.
+ *
+ * The card-shell shadow rules below key off the specific class
+ * patterns those components render — `.border-border.bg-background`
+ * for the DailyProgress + Stats cells, `.rounded-md.border` for
+ * the small pill container. Fragile if those components refactor,
+ * but this whole block is designed to be deleted if the prototype
+ * is rejected — so the coupling risk is bounded to the evaluation
+ * window.
+ *
+ * SAFE TO DELETE THIS BLOCK IF NEUMORPHIC DIRECTION IS REJECTED.
+ * ─────────────────────────────────────────────────────────── */
+.studio-neumorphic-scope {
+  /* Palette HSL — hex equivalents in comment for reference against
+   * the entry form's inline colours (NeumorphicOrderEntryLanding.tsx). */
+  --background: 216 22% 90%;         /* #e0e5ec surface */
+  --foreground: 217 17% 35%;         /* #4a5568 primary text */
+  --card: 216 22% 90%;               /* same as bg — depth via shadow, not fill */
+  --card-foreground: 217 17% 35%;
+  --muted: 216 22% 85%;
+  --muted-foreground: 220 15% 60%;   /* #8a94a7 label text */
+  --border: 216 22% 78%;
+  --primary: 230 63% 65%;            /* #6c7fdd CTA / active pill */
+  --primary-foreground: 0 0% 100%;
+  --success: 142 34% 54%;            /* #5cb582 soft green */
+  --warning: 35 55% 51%;             /* #c68f3d soft amber */
+  --danger: 0 51% 52%;               /* #c04a4a soft coral */
+
+  /* Force light rendering — neumorphic shadows depend on a bright
+   * highlight (top-left #ffffff) that only reads correctly on a
+   * light surface. If the visitor's app-level theme is dark, we
+   * override it locally here. */
+  color-scheme: light;
+  background: hsl(216 22% 90%);
+}
+
+/* Card shells — DailyProgressCard cells, StatsRow cells, and the
+ * value pill in GrowthChart all use variants of
+ * `.border-border.bg-background`. Hide the border, drop the
+ * signature neumorphic double-shadow, and warm the corner radius
+ * from lg (8px) to xl (16px) for the softer moulded look. Using
+ * [class*="bg-background"] instead of a literal `.bg-background`
+ * selector so the `bg-background/70` variant on the value pill
+ * (which encodes to `.bg-background\/70`) is caught too. */
+.studio-neumorphic-scope
+  [class*="bg-background"][class*="border-border"] {
+  border-color: transparent !important;
+  box-shadow:
+    -6px -6px 12px #ffffff,
+    6px 6px 12px #a3b1c6;
+  border-radius: 1rem;
+}
+
+/* Timeframe pill container (GrowthChart) — a thin bordered strip
+ * in production. Convert to a deep-inset shell so the active pill
+ * (which keeps its indigo fill from the CSS var) reads as pressed
+ * INTO the strip. Selector matches the exact class combo used in
+ * GrowthChart.tsx line ~494. */
+.studio-neumorphic-scope
+  .rounded-md.border.border-border.p-0\.5 {
+  border-color: transparent !important;
+  background: hsl(216 22% 85%);
+  box-shadow:
+    inset 3px 3px 6px #a3b1c6,
+    inset -3px -3px 6px #ffffff;
+  border-radius: 1rem;
+  padding: 4px;
+}
+
+/* Reveal-header buttons (Back, Replay in dev) — flat outlined in
+ * production; raised pills here. Height-8 rounded-md.border
+ * selector is tight enough to catch only these two buttons inside
+ * the scope. Rounded to full pill for a friendlier match to the
+ * neumorphic language. */
+.studio-neumorphic-scope .h-8.rounded-md.border {
+  border-color: transparent !important;
+  box-shadow:
+    -3px -3px 6px #ffffff,
+    3px 3px 6px #a3b1c6;
+  border-radius: 999px;
+}
+
+/* Reset / back button rendered by RevealDashboard as a floating
+ * dark circle (the "N" pill in the bottom-left of the screenshot).
+ * The default is a dark ring; on the neumorphic surface it looked
+ * out of place. Restyle to a raised light circle. If the button
+ * isn't a rounded-full element in a future refactor, this rule
+ * simply doesn't match — it's a best-effort improvement. */
+.studio-neumorphic-scope .rounded-full[aria-label*="Back" i],
+.studio-neumorphic-scope .rounded-full[aria-label*="entry" i] {
+  background: hsl(216 22% 90%) !important;
+  color: hsl(217 17% 35%) !important;
+  border-color: transparent !important;
+  box-shadow:
+    -4px -4px 8px #ffffff,
+    4px 4px 8px #a3b1c6;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * /studio/glassmorphic PROTOTYPE THEME
+ *
+ * Parallel to .studio-neumorphic-scope above, targeting the
+ * Vision Pro / macOS Big Sur / Windows 11 Fluent aesthetic:
+ * translucent surfaces with backdrop-blur+saturate, thin white
+ * borders, aurora gradient backdrop (owned by the page shell in
+ * app/studio/glassmorphic/page.tsx). Same additive-only scoping —
+ * safe to delete this block if the glass direction is rejected.
+ *
+ * Palette rationale
+ * -----------------
+ * Dark base (deep indigo #1e1b4b → slate #0f172a) so the vivid
+ * aurora blobs are visible even where cards don't cover them.
+ * White text with opacity variants (60/40/25) provides hierarchy
+ * without needing hard fills that would fight the transparency.
+ * Fuchsia primary echoes the CTA gradient in the entry form.
+ *
+ * SAFE TO DELETE THIS BLOCK IF GLASSMORPHIC DIRECTION IS REJECTED.
+ * ─────────────────────────────────────────────────────────── */
+.studio-glassmorphic-scope {
+  --background: 240 60% 5%;          /* deep indigo/slate — visible edges */
+  --foreground: 0 0% 100%;           /* pure white primary text */
+  --card: 0 0% 100%;                 /* white base — used with alpha */
+  --card-foreground: 0 0% 100%;
+  --muted: 0 0% 100%;
+  --muted-foreground: 0 0% 70%;      /* whitish muted */
+  --border: 0 0% 100%;               /* white base — used with alpha */
+  --primary: 292 84% 78%;            /* fuchsia-300 for accents */
+  --primary-foreground: 240 60% 15%; /* deep indigo on bright fuchsia */
+  --success: 142 76% 73%;            /* emerald-300 pastel */
+  --warning: 48 96% 76%;             /* amber-200 pastel */
+  --danger: 0 93% 82%;               /* red-300 pastel */
+
+  color-scheme: dark;
+  color: white;
+}
+
+/* Card shells — DailyProgressCard cells, StatsRow cells, and the
+ * value pill in GrowthChart. Convert to glass surfaces:
+ * semi-transparent white fill, backdrop blur+saturate for the
+ * signature look, thin white border, soft dark drop-shadow to
+ * push the card forward against the aurora. */
+.studio-glassmorphic-scope
+  [class*="bg-background"][class*="border-border"] {
+  background: rgba(255, 255, 255, 0.10) !important;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow: 0 8px 32px 0 rgba(15, 23, 42, 0.35);
+  border-radius: 1rem;
+}
+
+/* Timeframe pill container — thin bordered strip in production.
+ * Convert to a subtle glass pill; the active timeframe pill
+ * (which keeps its --primary fuchsia fill via the CSS var
+ * override above) reads as a bright chip floating on the strip. */
+.studio-glassmorphic-scope
+  .rounded-md.border.border-border.p-0\.5 {
+  background: rgba(255, 255, 255, 0.05) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  border-radius: 999px;
+}
+
+/* Reveal-header buttons (Back, Replay in dev) — glass pills. */
+.studio-glassmorphic-scope .h-8.rounded-md.border {
+  background: rgba(255, 255, 255, 0.08) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  border-radius: 999px;
+}
+
+/* Native form control tuning — pushes the OS-rendered scrollbars
+ * and text-selection carets toward the light palette so they
+ * don't clash with the glass surfaces. Only affects children of
+ * the scope. */
+.studio-glassmorphic-scope ::selection {
+  background: rgba(240, 171, 252, 0.35);
+  color: white;
+}
+
+/* CelebrationOverlay backdrop — the shared Lottie overlay
+ * (components/studio/CelebrationOverlay.tsx line 128) uses
+ * `bg-background` for its full-viewport curtain, which resolves
+ * to a solid dark indigo inside the glassmorphic scope thanks
+ * to the --background var override. That paints an opaque
+ * curtain over the aurora during the entry→celebrating→reveal
+ * transition, breaking the visual continuity of the glass
+ * palette.
+ *
+ * Fix: make the overlay backdrop transparent inside the scope
+ * so the parent page's aurora gradient (which is
+ * background-attachment: fixed and thus anchored to the viewport)
+ * shows straight through beneath the Lottie. Neumorphic route
+ * intentionally NOT patched here — its bg-background resolves
+ * to the same soft blue-gray as the page shell, so the overlay
+ * blends seamlessly on its own.
+ *
+ * Selector is deliberately narrow (fixed + inset-0 + z-40 +
+ * bg-background) to avoid catching any future full-viewport
+ * curtain that legitimately wants to opt out of the aurora. */
+.studio-glassmorphic-scope
+  .fixed.inset-0.z-40.bg-background {
+  background-color: transparent !important;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * /studio/claymorphic PROTOTYPE THEME  (v2 — colourful)
+ *
+ * Third variant, parallel to the neumorphic + glassmorphic
+ * scopes above. Targets the "clay UI" aesthetic (Michal
+ * Malewicz's coinage): chunky "3D pillow" surfaces with a
+ * three-layer shadow recipe, heavy corner rounding, saturated
+ * violet CTA gradient, and — critically — a colour-per-tile
+ * palette across the reveal-stage grid so the page reads as
+ * playful and picture-book rather than sterile.
+ *
+ * The v1 pass used all-white tiles with subtle shadows, which
+ * felt more like "light neumorphism" than clay. v2 introduces:
+ *
+ *   1. Bold violet gradient hero pill (VALUE / GAIN / next-
+ *      milestone) — the credit-card equivalent from Malewicz's
+ *      original clay-UI reference designs. Announces the page.
+ *   2. 4-colour pastel palette on the DailyProgressCard row
+ *      (sky / amber / rose / emerald) — the "icon tile" moment.
+ *   3. 4-colour pastel palette on the StatsRow (violet / slate
+ *      / mint / orange) — audit-row that still feels part of
+ *      the same doughy family.
+ *   4. Dramatically stronger shadows across all surfaces:
+ *      deeper offset, wider blur, higher alpha. Real 3D pillow
+ *      depth instead of subtle-drop-shadow depth.
+ *   5. TINTED shadows — each cell's drop shadow picks up its
+ *      own hue at low alpha, so the accent colour bleeds into
+ *      the surrounding pixels and the piece reads as "chunky
+ *      coloured plasticine on periwinkle carpet".
+ *
+ * SAFE TO DELETE THIS BLOCK IF CLAYMORPHIC DIRECTION IS REJECTED.
+ * ─────────────────────────────────────────────────────────── */
+.studio-claymorphic-scope {
+  --background: 226 40% 96%;         /* #eef1f9 periwinkle mist */
+  --foreground: 222 47% 20%;         /* #1e293b slate-800 primary text */
+  --card: 0 0% 100%;                 /* pure white — depth via shadow, not fill */
+  --card-foreground: 222 47% 20%;
+  --muted: 226 30% 94%;
+  --muted-foreground: 220 15% 45%;   /* #64748b slate-500 secondary text */
+  --border: 226 25% 88%;
+  --primary: 262 83% 58%;            /* #7c3aed violet-600 — matches CTA gradient base */
+  --primary-foreground: 0 0% 100%;
+  --success: 142 71% 42%;            /* #16a34a green-600 */
+  --warning: 32 95% 44%;             /* #d97706 amber-600 */
+  --danger: 0 84% 55%;               /* #ef4444 red-500 */
+
+  /* Force light rendering — clay's inset top-highlight only
+   * reads correctly on a light surface, same constraint as
+   * neumorphic. */
+  color-scheme: light;
+  background: hsl(226 40% 96%);
+}
+
+/* GENERAL CARD SHELL — applies to everything not overridden by
+ * a more specific rule below (chart card, tooltip, any future
+ * cards). The default clay recipe:
+ *   • Solid white fill
+ *   • Chunky 3-part shadow: big outer drop + top highlight +
+ *     bottom inset. Increased offsets & alpha over v1 for real
+ *     pillow depth.
+ *   • Deep corner rounding (1.5rem = 24px).
+ * The more-specific rules below (Value pill, daily-progress
+ * cells, stats-row cells) win over this one thanks to their
+ * tighter selectors. */
+.studio-claymorphic-scope
+  [class*="bg-background"][class*="border-border"] {
+  background: #ffffff !important;
+  border-color: transparent !important;
+  box-shadow:
+    0 20px 40px -10px rgba(60, 60, 100, 0.18),
+    0 6px 12px -4px rgba(60, 60, 100, 0.08),
+    inset 0 10px 14px -6px rgba(255, 255, 255, 1),
+    inset 0 -8px 14px -4px rgba(60, 60, 100, 0.06);
+  border-radius: 1.5rem;
+}
+
+/* VALUE PILL — the hero card in GrowthChart's top-left corner.
+ * Uniquely identified by `.absolute.left-4.top-4` (no other
+ * element on the page shares this exact combo). Overrides the
+ * general white card treatment with a saturated violet gradient
+ * and inverts text colours for legibility.
+ *
+ * The violet-tinted drop shadow bleeds the CTA colour into the
+ * chart panel behind it — visually anchors the pill to the
+ * curve it's summarising, echoing Malewicz's "coloured pill on
+ * a neutral tray" motif from the reference. */
+.studio-claymorphic-scope
+  .absolute.left-4.top-4[class*="bg-background"] {
+  background: linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%) !important;
+  border-color: transparent !important;
+  box-shadow:
+    0 20px 36px -8px rgba(124, 58, 237, 0.45),
+    0 8px 16px -4px rgba(124, 58, 237, 0.25),
+    inset 0 6px 10px -2px rgba(255, 255, 255, 0.35),
+    inset 0 -6px 12px -2px rgba(0, 0, 0, 0.18) !important;
+  border-radius: 1.25rem;
+  backdrop-filter: none;
+}
+/* Force ALL text inside the value pill to white — the pill uses
+ * text-muted-foreground (VALUE kicker) and text-foreground (the
+ * number) which resolve to slate on the general scope. On the
+ * violet gradient background those are unreadable. Green/red
+ * gain% override kept — they still read on violet at their
+ * saturation levels. */
+.studio-claymorphic-scope
+  .absolute.left-4.top-4[class*="bg-background"] .text-muted-foreground,
+.studio-claymorphic-scope
+  .absolute.left-4.top-4[class*="bg-background"] .text-foreground {
+  color: white !important;
+}
+/* Divider (border-t) inside the pill — soften to a translucent
+ * white so it doesn't look like a hard line against the violet. */
+.studio-claymorphic-scope
+  .absolute.left-4.top-4[class*="bg-background"] .border-t.border-border {
+  border-top-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* DAILY PROGRESS CELLS — 4-colour rainbow across Day / Today /
+ * Streak / Month. Each cell gets a distinct pastel background
+ * PLUS a tinted drop shadow matching its hue, so the shadows
+ * on the periwinkle floor form a soft coloured halo around
+ * each pillow.
+ *
+ * Palette rationale
+ *   • Day    — SKY blue    (calm, "the run continues")
+ *   • Today  — AMBER       (sunrise / heat / today's spotlight)
+ *   • Streak — ROSE        (heat / hot-streak connotation)
+ *   • Month  — EMERALD     (growth / green sprout)
+ *
+ * Selector: `[aria-label="Daily progress"]` is the <section>,
+ * `> *:nth-child(N)` is the MotionCell (motion.div wrapper),
+ * and `[class*="bg-background"]` inside catches the actual
+ * Metric div. Robust to internal refactors that add more layers
+ * around the Metric. */
+
+/* Day — sky */
+.studio-claymorphic-scope
+  [aria-label="Daily progress"] > *:nth-child(1) [class*="bg-background"] {
+  background: #eff6ff !important;
+  box-shadow:
+    0 18px 32px -10px rgba(59, 130, 246, 0.28),
+    0 6px 12px -4px rgba(59, 130, 246, 0.14),
+    inset 0 8px 12px -4px rgba(255, 255, 255, 1),
+    inset 0 -6px 12px -4px rgba(59, 130, 246, 0.08) !important;
+}
+/* Today — amber */
+.studio-claymorphic-scope
+  [aria-label="Daily progress"] > *:nth-child(2) [class*="bg-background"] {
+  background: #fffbeb !important;
+  box-shadow:
+    0 18px 32px -10px rgba(245, 158, 11, 0.30),
+    0 6px 12px -4px rgba(245, 158, 11, 0.15),
+    inset 0 8px 12px -4px rgba(255, 255, 255, 1),
+    inset 0 -6px 12px -4px rgba(245, 158, 11, 0.10) !important;
+}
+/* Streak — rose */
+.studio-claymorphic-scope
+  [aria-label="Daily progress"] > *:nth-child(3) [class*="bg-background"] {
+  background: #fef2f2 !important;
+  box-shadow:
+    0 18px 32px -10px rgba(239, 68, 68, 0.28),
+    0 6px 12px -4px rgba(239, 68, 68, 0.14),
+    inset 0 8px 12px -4px rgba(255, 255, 255, 1),
+    inset 0 -6px 12px -4px rgba(239, 68, 68, 0.09) !important;
+}
+/* Month — emerald */
+.studio-claymorphic-scope
+  [aria-label="Daily progress"] > *:nth-child(4) [class*="bg-background"] {
+  background: #f0fdf4 !important;
+  box-shadow:
+    0 18px 32px -10px rgba(34, 197, 94, 0.28),
+    0 6px 12px -4px rgba(34, 197, 94, 0.14),
+    inset 0 8px 12px -4px rgba(255, 255, 255, 1),
+    inset 0 -6px 12px -4px rgba(34, 197, 94, 0.09) !important;
+}
+
+/* STATS ROW CELLS — 4-colour palette for Value / Invested /
+ * Gain / XIRR. Chosen to visually distinguish from the daily-
+ * progress row above (no colour overlap) so the eye reads two
+ * distinct groups even without the section headings.
+ *
+ * Palette rationale
+ *   • Value    — VIOLET  (primary metric, matches hero pill)
+ *   • Invested — SLATE   (neutral anchor, "baseline money-in")
+ *   • Gain     — MINT    (positive-connotation without duping
+ *                          Month's emerald)
+ *   • XIRR     — ORANGE  (heat / rate-of-return)
+ *
+ * Selector nests one level deeper than daily-progress because
+ * StatsRow wraps its grid in a container <section>. */
+
+/* Value — violet */
+.studio-claymorphic-scope
+  [aria-label="Portfolio stats"] .grid > *:nth-child(1) [class*="bg-background"] {
+  background: #f5f3ff !important;
+  box-shadow:
+    0 18px 32px -10px rgba(124, 58, 237, 0.28),
+    0 6px 12px -4px rgba(124, 58, 237, 0.14),
+    inset 0 8px 12px -4px rgba(255, 255, 255, 1),
+    inset 0 -6px 12px -4px rgba(124, 58, 237, 0.09) !important;
+}
+/* Invested — slate (neutral anchor) */
+.studio-claymorphic-scope
+  [aria-label="Portfolio stats"] .grid > *:nth-child(2) [class*="bg-background"] {
+  background: #f1f5f9 !important;
+  box-shadow:
+    0 18px 32px -10px rgba(100, 116, 139, 0.28),
+    0 6px 12px -4px rgba(100, 116, 139, 0.14),
+    inset 0 8px 12px -4px rgba(255, 255, 255, 1),
+    inset 0 -6px 12px -4px rgba(100, 116, 139, 0.09) !important;
+}
+/* Gain — mint (teal-lean green so it doesn't dup Month) */
+.studio-claymorphic-scope
+  [aria-label="Portfolio stats"] .grid > *:nth-child(3) [class*="bg-background"] {
+  background: #ecfeff !important;
+  box-shadow:
+    0 18px 32px -10px rgba(20, 184, 166, 0.28),
+    0 6px 12px -4px rgba(20, 184, 166, 0.14),
+    inset 0 8px 12px -4px rgba(255, 255, 255, 1),
+    inset 0 -6px 12px -4px rgba(20, 184, 166, 0.09) !important;
+}
+/* XIRR — orange (warmer than amber to distinguish from Today) */
+.studio-claymorphic-scope
+  [aria-label="Portfolio stats"] .grid > *:nth-child(4) [class*="bg-background"] {
+  background: #fff7ed !important;
+  box-shadow:
+    0 18px 32px -10px rgba(249, 115, 22, 0.30),
+    0 6px 12px -4px rgba(249, 115, 22, 0.15),
+    inset 0 8px 12px -4px rgba(255, 255, 255, 1),
+    inset 0 -6px 12px -4px rgba(249, 115, 22, 0.10) !important;
+}
+
+/* Timeframe pill container (GrowthChart) — deep-inset "tray"
+ * effect so the active pill (which keeps its --primary violet
+ * fill via the CSS var override) reads as PRESSED INTO the
+ * tray. Rounded pill shape, wider padding for chunky feel. */
+.studio-claymorphic-scope
+  .rounded-md.border.border-border.p-0\.5 {
+  background: #e2e5f0 !important;
+  border-color: transparent !important;
+  box-shadow:
+    inset 0 4px 8px 0 rgba(60, 60, 100, 0.14),
+    inset 0 -1px 2px 0 rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  padding: 5px;
+}
+
+/* Active timeframe pill — chunky raised violet with matching
+ * drop shadow that pops out of the tray. Selector targets any
+ * button inside the tray that has the primary-fill background
+ * class. Framer-motion's staggered active state means this may
+ * animate opacity — hence the box-shadow declared alongside
+ * background, not via transition. */
+.studio-claymorphic-scope
+  .rounded-md.border.border-border.p-0\.5
+  .bg-\[hsl\(var\(--primary\)\)\] {
+  box-shadow:
+    0 6px 12px -2px rgba(124, 58, 237, 0.45),
+    inset 0 2px 4px -1px rgba(255, 255, 255, 0.35),
+    inset 0 -2px 4px -1px rgba(0, 0, 0, 0.15) !important;
+  border-radius: 999px !important;
+}
+
+/* Reveal-header buttons (Back, Replay in dev) — chunky raised
+ * pills. Beefier shadow than v1 to match the general clay
+ * language. */
+.studio-claymorphic-scope .h-8.rounded-md.border {
+  background: #ffffff !important;
+  border-color: transparent !important;
+  box-shadow:
+    0 10px 18px -4px rgba(60, 60, 100, 0.18),
+    0 4px 8px -2px rgba(60, 60, 100, 0.08),
+    inset 0 3px 5px -1px rgba(255, 255, 255, 1),
+    inset 0 -3px 6px -2px rgba(60, 60, 100, 0.06);
+  border-radius: 999px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/* Reset / back "N" pill rendered by RevealDashboard. Same
+ * clay treatment as the header buttons — light raised chip
+ * that harmonises with the palette. */
+.studio-claymorphic-scope .rounded-full[aria-label*="Back" i],
+.studio-claymorphic-scope .rounded-full[aria-label*="entry" i] {
+  background: #ffffff !important;
+  color: hsl(222 47% 20%) !important;
+  border-color: transparent !important;
+  box-shadow:
+    0 12px 20px -4px rgba(60, 60, 100, 0.20),
+    0 4px 8px -2px rgba(60, 60, 100, 0.10),
+    inset 0 3px 5px -1px rgba(255, 255, 255, 1),
+    inset 0 -3px 6px -2px rgba(60, 60, 100, 0.06);
+}

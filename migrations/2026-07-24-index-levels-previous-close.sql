@@ -1,0 +1,53 @@
+-- ─── index_levels.previous_close / previous_close_date ──────────────────
+--
+-- Adds two nullable columns to `index_levels` capturing the previous
+-- trading day's close for each index, so the Overview page can display
+-- today's % market movement alongside the "% below X high" columns
+-- without needing a second Yahoo round-trip at render time.
+--
+-- Both columns are nullable, not defaulted:
+--   • Pre-migration rows already in the table (from the 2026-07-23
+--     initial refresh) don't have these values — the next refresh
+--     backfills them, and the UI renders "—" for the "Today" column
+--     until that happens. Safer than backfilling with a fake number
+--     that could confuse the sign/color coding.
+--   • A future ticker that Yahoo can't return prior-day data for (data
+--     gap on a first trading day, listing debut, etc.) also legitimately
+--     lands NULL — same "—" fallback in the UI covers both cases.
+--
+-- WHY STORE IT SEPARATELY vs. compute-at-render-time
+-- ──────────────────────────────────────────────────
+-- Rendering-time computation would require fetching the last two daily
+-- bars from Yahoo on every page load — even with a client-side cache
+-- that's a per-index API call. Storing the pre-computed prior close
+-- alongside `current_level` means the Overview page reads one row per
+-- index from Supabase and computes today's % locally (subtract, divide,
+-- render) — zero extra network I/O.
+--
+-- Refresh keeps writing both current_level and previous_close in the
+-- same upsert (see app/api/refresh-index-levels/route.ts +
+-- lib/indexLevels/yahooClient.ts), so they always stay date-consistent:
+-- previous_close_date is always the trading day immediately before
+-- as_of_date within the same daily-close series.
+
+alter table index_levels
+  add column if not exists previous_close numeric(14, 2),
+  add column if not exists previous_close_date date;
+
+-- ─── Verification ─────────────────────────────────────────────────────────
+--
+--   -- Column presence + type + nullability
+--   select column_name, data_type, is_nullable
+--   from information_schema.columns
+--   where table_name = 'index_levels'
+--     and column_name in ('previous_close', 'previous_close_date')
+--   order by column_name;
+--   -- expects: 2 rows, both nullable=YES (previous_close_date=date,
+--   -- previous_close=numeric)
+--
+--   -- Pre-refresh state: existing rows still NULL until refresh runs
+--   select index_code, current_level, previous_close, previous_close_date
+--   from index_levels
+--   order by index_code;
+--   -- expects: all 6 rows have previous_close = NULL until the first
+--   -- post-migration refresh, at which point they populate.

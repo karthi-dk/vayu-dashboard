@@ -1,0 +1,41 @@
+{
+  "name": "vayu-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal portfolio dashboard — Next.js 15, wired to Supabase",
+  "scripts": {
+    "dev": "NODE_TLS_REJECT_UNAUTHORIZED=0 next dev -p 5000",
+    "build": "next build",
+    "start": "NODE_TLS_REJECT_UNAUTHORIZED=0 next start -p 5000",
+    "lint": "next lint",
+    "zip": "rm -f vayu-dashboard.zip && zip -rq vayu-dashboard.zip . -x 'node_modules/*' '.next/*' '.git/*' '.DS_Store' 'tsconfig.tsbuildinfo' '.env.local' '.env' 'vayu-dashboard.zip' && ls -lh vayu-dashboard.zip"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.109.0",
+    "canvas-confetti": "^1.9.4",
+    "clsx": "^2.1.1",
+    "exceljs": "^4.4.0",
+    "framer-motion": "^12.42.2",
+    "lottie-react": "^2.4.1",
+    "lucide-react": "^0.469.0",
+    "next": "15.3.3",
+    "node-html-parser": "^9.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.0",
+    "server-only": "^0.0.1",
+    "tailwind-merge": "^2.6.0"
+  },
+  "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "15.3.3",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,31 @@
+# Dependencies & build
+node_modules/
+.next/
+out/
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# Env / secrets — never commit
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vercel
+.vercel
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Local artefacts
+*.har
+tracing.zip
+vayu-dashboard.zip
+*.zip

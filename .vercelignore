@@ -1,0 +1,56 @@
+# .vercelignore — controls what rides along in the drag-and-drop
+# upload to vercel.com/new. Same syntax as .gitignore, applied at
+# upload time. Vercel builds fresh from source on their servers, so
+# excluding these directories doesn't just save upload bandwidth —
+# it also keeps them out of any build cache that could accidentally
+# expose local-only artefacts.
+
+# ── Local env / secrets ─────────────────────────────────────────
+# .env.local holds SUPABASE_SERVICE_KEY, DHAN_TOKEN_ID, and (once
+# you set them) APP_PASSWORD + APP_SESSION_SECRET. Uploading it
+# would leak the service-role key to Vercel's build logs and — if
+# the Vercel project's env vars aren't overriding — into the
+# deployed runtime. Set env vars in the Vercel dashboard instead;
+# this file is NEVER meant to leave your laptop.
+.env.local
+.env.*.local
+
+# ── Build artefacts / installed deps ────────────────────────────
+# Vercel runs `npm ci` + `next build` on their servers. Anything
+# under .next or node_modules would be rebuilt anyway, but leaving
+# them in the upload can push a small folder over the 100 MB /
+# 15,000-file limits for direct-uploads on the Hobby tier.
+node_modules
+.next
+next-env.d.ts
+
+# ── Editor / OS junk ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode
+.idea
+
+# ── Migrations + one-off CLI scripts ────────────────────────────
+# SQL migrations are applied via Supabase Studio, not the app
+# runtime. The scripts/ folder is CLI-only (backfills, verifiers,
+# HAR analysers) — Next.js doesn't bundle them because no route
+# imports them, but excluding here keeps the deploy artefact
+# smaller and gives fewer readable-source breadcrumbs to anyone
+# who cracks the login gate.
+migrations
+scripts
+
+# ── Docs & project notes ────────────────────────────────────────
+# No runtime value. Shipping them wastes bytes and exposes design
+# intent (attack-surface reconnaissance).
+README.md
+DEPLOY.md
+TODO.md
+NOTES.md
+docs
+
+# ── HAR / trace files sometimes dumped into the repo during dev
+*.har
+tracing.zip
