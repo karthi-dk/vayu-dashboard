@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PulseDot } from "@/components/ui/PulseDot";
 import { TimeAgo } from "@/components/ui/TimeAgo";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { MobileNav } from "./MobileNav";
 import { NavLinks } from "./NavLinks";
 import { RefreshAllButton } from "./RefreshAllButton";
 import { SignOutButton } from "./SignOutButton";
@@ -82,19 +83,19 @@ export async function TopNav() {
     latestNavRefresh(),
   ]);
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-        <div className="flex items-center gap-4 sm:gap-8">
+    <header className="sticky top-0 z-40 overflow-x-hidden border-b border-border bg-background/80 backdrop-blur">
+      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4 sm:px-6">
+        <div className="flex min-w-0 items-center gap-4 sm:gap-8">
           <Link
             href="/"
-            className="text-sm font-bold tracking-tight text-foreground"
+            className="shrink-0 text-sm font-bold tracking-tight text-foreground"
           >
             VAYU<span className="text-[hsl(var(--primary))]">.</span>
           </Link>
           <NavLinks />
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-3">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
           {/* Two freshness chips — Holdings and NAVs.
               Responsive layout is the interesting bit:
                 • Mobile (< sm): STACKED VERTICALLY, dot + short time
@@ -168,8 +169,13 @@ export async function TopNav() {
               rationale on why this lives in TopNav rather than
               only on the Overview page. */}
           <RefreshAllButton />
-          <ThemeToggle />
-          <SignOutButton />
+          {/* Theme + sign-out live in the mobile sheet below md so
+              the phone header stays: brand · chips · refresh · menu. */}
+          <div className="hidden items-center gap-1.5 md:flex">
+            <ThemeToggle />
+            <SignOutButton />
+          </div>
+          <MobileNav />
         </div>
       </div>
     </header>

@@ -6,7 +6,6 @@ import { ClaymorphicOrderEntryLanding } from "@/components/studio/ClaymorphicOrd
 import { RevealDashboard } from "@/components/studio/RevealDashboard";
 import { StudioClickPulse } from "@/components/studio/StudioClickPulse";
 import { StudioClickSound } from "@/components/studio/StudioClickSound";
-import { TestModeBanner } from "@/components/studio/TestModeBanner";
 import { getStudioData, type StudioData } from "@/app/studio/data";
 
 /**
@@ -69,7 +68,6 @@ export default function ClaymorphicStudioPage() {
     <div className="studio-claymorphic-scope min-h-dvh bg-[#eef1f9] py-6">
       <StudioClickSound />
       <StudioClickPulse />
-      <TestModeBanner />
       {stage === "entry" && (
         <ClaymorphicOrderEntryLanding
           onSubmitted={() => {

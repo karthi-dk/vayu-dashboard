@@ -59,10 +59,16 @@ const config: Config = {
           from: { transform: "rotate(0deg)" },
           to: { transform: "rotate(360deg)" },
         },
+        "nav-progress": {
+          "0%": { transform: "scaleX(0.08)" },
+          "40%": { transform: "scaleX(0.55)" },
+          "100%": { transform: "scaleX(0.92)" },
+        },
       },
       animation: {
         "pulse-dot": "pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         spin: "spin 1s linear infinite",
+        "nav-progress": "nav-progress 8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards",
       },
     },
   },

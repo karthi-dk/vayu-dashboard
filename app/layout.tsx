@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 import { TopNav } from "@/components/nav/TopNav";
+import { NavigationProgress } from "@/components/nav/NavigationProgress";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 
 export const metadata: Metadata = {
@@ -144,6 +145,7 @@ export default async function RootLayout({
         />
       </head>
       <body className="font-sans antialiased">
+        <NavigationProgress />
         {hideChrome ? null : <TopNav />}
         <main
           className={

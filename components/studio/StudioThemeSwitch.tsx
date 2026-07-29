@@ -12,9 +12,8 @@ import { cn } from "@/lib/utils";
  * Compact theme switcher for Studio routes.
  *
  * TopNav is hidden on /studio* for recording. This pill sits top-right
- * so it clears the centered TEST MODE banner and stays out of the
- * middle of the frame, while still giving one-tap deep links across
- * Classic / Clay / Glass / Soft.
+ * so it stays out of the middle of the frame while still giving
+ * one-tap deep links across Classic / Clay / Glass / Soft.
  */
 export function StudioThemeSwitch() {
   const pathname = usePathname();

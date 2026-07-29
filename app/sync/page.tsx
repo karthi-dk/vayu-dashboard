@@ -7,8 +7,10 @@ import { LogMfTxCard } from "@/components/sync/LogMfTxCard";
 import { LogCreditEventCard } from "@/components/sync/LogCreditEventCard";
 import { NpsCraPasteCard } from "@/components/sync/NpsCraPasteCard";
 import { RefreshIndexLevelsCard } from "@/components/sync/RefreshIndexLevelsCard";
+import { DeleteStudioTestDataCard } from "@/components/sync/DeleteStudioTestDataCard";
 import { TimeAgo } from "@/components/ui/TimeAgo";
 import { getSyncData } from "@/lib/queries";
+import { sbServer } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +27,12 @@ export default async function SyncPage() {
     npsState,
     indexLevels,
   } = await getSyncData();
+
+  const testCountRes = await sbServer
+    .from("mf_transactions")
+    .select("id", { count: "exact", head: true })
+    .eq("platform", "test");
+  const testTxCount = testCountRes.count ?? 0;
 
   return (
     <div className="flex flex-col gap-8">
@@ -56,6 +64,7 @@ export default async function SyncPage() {
           the placement platform, and existing mf_contributions rows
           from prior Groww ingest continue to render in the ledger. */}
       <LogMfTxCard />
+      <DeleteStudioTestDataCard testTxCount={testTxCount} />
       <LogCreditEventCard epf={epfState} nps={npsState} />
       {/* NPS CRA SOT reconciliation — the /credits log auto-derives
           per-scheme rows using the current alloc split + nps_nav_history

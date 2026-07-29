@@ -9,22 +9,12 @@ import {
   isStudioThemeActive,
 } from "@/lib/studio/themes";
 import { cn } from "@/lib/utils";
+import { NAV_LINKS, studioSectionActive } from "./navConfig";
 
-const LINKS = [
-  // Studio sits FIRST — daily recording landing. Theme variants live
-  // in the Studio dropdown so the top bar stays one word wide.
-  { href: "/", label: "Overview" },
-  { href: "/portfolio", label: "Portfolio" },
-  { href: "/credits", label: "Credits" },
-  { href: "/sync", label: "Sync" },
-  { href: "/settings", label: "Settings" },
-  { href: "/filings", label: "Filings" },
-];
-
-function studioSectionActive(pathname: string): boolean {
-  return pathname === "/studio" || pathname.startsWith("/studio/");
-}
-
+/**
+ * Desktop inline nav — Studio dropdown + primary routes.
+ * Hidden below `md`; MobileNav owns the phone chrome.
+ */
 export function NavLinks() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -52,7 +42,7 @@ export function NavLinks() {
   }, [pathname]);
 
   return (
-    <nav className="flex items-center gap-3 sm:gap-6">
+    <nav className="hidden items-center gap-6 md:flex">
       <div ref={menuRef} className="relative">
         <button
           type="button"
@@ -108,7 +98,7 @@ export function NavLinks() {
         )}
       </div>
 
-      {LINKS.map(({ href, label }) => {
+      {NAV_LINKS.map(({ href, label }) => {
         const active =
           href === "/" ? pathname === "/" : pathname.startsWith(href);
         return (

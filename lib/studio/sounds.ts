@@ -208,9 +208,11 @@ const CRACKER_STORAGE_KEY = "studio.crackerVariant";
  *  layered tap that shipped as the initial default. */
 const DEFAULT_CLICK_VARIANT: ClickVariantId = "layered";
 
-/** Fallback rollup variant — odometer is the most classic
- *  "numbers rolling up" sound and pairs well with any click choice. */
-const DEFAULT_ROLLUP_VARIANT: RollupVariantId = "odometer";
+/** Fallback rollup variant — slot_machine is duration-synced to the
+ *  reveal's Total Orders roll-up (≈2030ms + jackpot ding). Odometer
+ *  used to be the default but its ~1.2s body ended near the top-value
+ *  pill, which desynced the ASMR from the last stats tile. */
+const DEFAULT_ROLLUP_VARIANT: RollupVariantId = "slot_machine";
 
 /** Fallback cracker variant — rocket_whistle is the archetypal
  *  "sky-cracker" (rising whistle + burst) and matches the video-
@@ -1095,19 +1097,36 @@ export const CLICK_VARIANT_LIST: readonly ClickVariantMeta[] = Object.values(
 
 // ── ROLLUP #1: ODOMETER ─────────────────────────────────────────
 // Rapid decelerating ticks — the classic "mechanical counter
-// spinning down to a stop" sound. Starts fast, gradually slows.
+// spinning down to a stop" sound. Duration + concluding ding match
+// synthSlotMachine so either variant stays locked to Total Orders
+// settling (ROLLUP_SOUND_BEGIN + ≈2030ms = 4030). Prior shorter
+// body (~1.2s, no ding) ended near the chart pill roll-up.
 function synthOdometer(ctx: Ctx): void {
   const now = ctx.currentTime;
   const master = defaultVolume("rollup");
-  const count = 18;
+  // 26 ticks, cubic ease-out — same envelope length as slot_machine.
+  const count = 26;
   let t = now;
   for (let i = 0; i < count; i++) {
-    scheduleTick(ctx, t, { volume: master * 0.9, freq: 1800, dur: 0.008 });
-    // Interval eases from 40ms → 110ms (cubic ease-out).
+    const isLast = i === count - 1;
+    scheduleTick(ctx, t, {
+      volume: master * (isLast ? 1.35 : 0.9),
+      freq: isLast ? 2200 : 1800,
+      dur: 0.008,
+      withSting: isLast,
+      stingFreq: 2000,
+    });
     const progress = i / (count - 1);
-    const interval = 0.04 + Math.pow(progress, 2.2) * 0.07;
+    const interval = 0.048 + Math.pow(progress, 3) * 0.12;
     t += interval;
   }
+  // Ending beep #1 — lands with Total Orders settle when fired from
+  // ROLLUP_SOUND_BEGIN. No follow-up ding; one climax tone is enough.
+  scheduleNote(ctx, t + 0.03, {
+    freq: 1568, // G6
+    volume: master * 1.15,
+    dur: 0.5,
+  });
 }
 
 // ── ROLLUP #2: SLOT MACHINE ─────────────────────────────────────
@@ -4702,6 +4721,22 @@ export function playDing(): void {
 
 export function playRollup(): void {
   void play("rollup");
+}
+
+/**
+ * Reveal-ceremony counter ASMR — always the duration-synced
+ * slot_machine, ignoring the /studio/sounds lab selection.
+ *
+ * Why not playRollup()?
+ * The lab lets you audition 15 variants; several are deliberately
+ * short (~0.8–1.5s). If that preference leaked into the reveal,
+ * the ticks would die while the Total Orders tile was still
+ * rolling (or worse, with the chart pill). This helper keeps the
+ * recording surface locked to the choreography in STUDIO_TIMING
+ * regardless of what the tester last clicked in the sound lab.
+ */
+export function playRollupForReveal(): void {
+  void playRollupVariant("slot_machine");
 }
 
 export function playCracker(): void {

@@ -8,7 +8,7 @@ import { StatsRow } from "@/components/studio/StatsRow";
 import { getStudioData, type StudioData } from "@/app/studio/data";
 import {
   playDing,
-  playRollup,
+  playRollupForReveal,
   playSwoosh,
   playVerdict,
 } from "@/lib/studio/sounds";
@@ -148,6 +148,10 @@ export const STUDIO_TIMING = {
   STATS_BASE: 2580,
   STATS_STAGGER: 100,
   STATS_ROLLUP: 950,
+  /** When Total Orders (stats tile idx 5) finishes rolling.
+   *  = STATS_BASE + 5*STATS_STAGGER + STATS_ROLLUP.
+   *  Counter ASMR + its single ending beep land here. */
+  TOTAL_ORDERS_SETTLE: 2580 + 5 * 100 + 950, // 4030
   /** 1D verdict coda offset from t=0. Sign+magnitude-tiered sound
    *  & visual: chime up on green, soft descend on red, silent on
    *  flat. Both StatsRow (visual pulse/settle/tilt + particles)
@@ -182,11 +186,10 @@ export const STUDIO_TIMING = {
   VERDICT_BEGIN: 5500,
 } as const;
 
-/** True in `next dev`, false in production builds. `process.env.NODE_ENV`
- *  is a compile-time constant in Next.js client bundles — the check
- *  gets tree-shaken to `false` in prod so the replay button and its
- *  handler get eliminated from the bundle entirely. */
-const IS_DEV = process.env.NODE_ENV === "development";
+/** TEMP: Replay shown in prod for screen-recording / choreography
+ *  checks. Flip to `false` (or delete the button block) when done —
+ *  it was originally `NODE_ENV === "development"` only. */
+const SHOW_STUDIO_REPLAY = true;
 
 export function RevealDashboard({
   wasSubmit,
@@ -222,18 +225,18 @@ export function RevealDashboard({
   // later refetch triggered by the parent bumping refreshKey
   // (always execute — the parent explicitly asked for fresh data).
   const initialRefreshKeyRef = useRef<number>(refreshKey);
-  // Dev-only replay counter — incrementing this changes the `key`
-  // on the animated content wrapper, forcing framer-motion to
-  // unmount and remount the whole subtree. That's what re-fires
-  // the entrance sequence: chart line-draw + pill fade + roll-ups
-  // + cell staggers all restart from t=0 without needing a form
-  // round-trip. Not visible in production builds (see IS_DEV).
+  // Replay counter — incrementing this changes the `key` on the
+  // animated content wrapper, forcing framer-motion to unmount and
+  // remount the whole subtree. That's what re-fires the entrance
+  // sequence: chart line-draw + pill fade + roll-ups + cell
+  // staggers all restart from t=0 without needing a form round-trip.
+  // Gated by SHOW_STUDIO_REPLAY (temp-on for recording).
   const [replayCount, setReplayCount] = useState<number>(0);
   // Submit path = animate. Skip path = static. Once data has landed
   // for the first time in a submit session, subsequent refreshes
   // don't re-animate — that would look wrong (numbers "rewinding"
   // to zero and rolling up again on every tab-focus refresh).
-  // Replay button in dev overrides this to force-animate.
+  // Replay overrides this to force-animate.
   const shouldAnimate = wasSubmit || replayCount > 0;
 
   useEffect(() => {
@@ -290,28 +293,20 @@ export function RevealDashboard({
   //   • ding   @ t=1600  → aligns with STUDIO_TIMING.PILL_BEGIN —
   //                        the instant the current-value pill
   //                        scale-fades in over the chart.
-  //   • rollup @ t=2000  → STUDIO_TIMING.ROLLUP_SOUND_BEGIN. Fires
-  //                        580ms BEFORE the stats cascade starts so
-  //                        the sound's 2030ms "toing" body ends
-  //                        exactly when the last rolling tile
-  //                        (Total Orders, idx 5) settles at t=4030.
-  //                        Users hear the slot-machine spin winding
-  //                        down as the numbers land — the jackpot
-  //                        ding coincides with the final digit to
-  //                        the millisecond.
+  //   • rollup @ t=2000  → STUDIO_TIMING.ROLLUP_SOUND_BEGIN. Always
+  //                        slot_machine via playRollupForReveal (lab
+  //                        variant is ignored) so the 2030ms body
+  //                        ends exactly when Total Orders (idx 5)
+  //                        settles at TOTAL_ORDERS_SETTLE=4030. The
+  //                        synth's jackpot G6 is the single ending
+  //                        beep — no follow-up playDing (that used
+  //                        to fire +500ms and sounded like a second,
+  //                        mismatched tone).
   //   • verdict@ t=5500  → STUDIO_TIMING.VERDICT_BEGIN. Sign+
   //                        magnitude-tiered coda: chime up on green,
   //                        soft descend on red, silent on flat (see
-  //                        resolveVerdictTier). 970ms after the
-  //                        rollup ding's decay fully clears
-  //                        (ding decays 4030→4530). Prior tuning
-  //                        (t=4280, +250ms after ding onset) landed
-  //                        verdict inside the ding's tail and read
-  //                        as a muddy chord; user flagged on first
-  //                        playback (2026-07-29). Uses the day's
-  //                        oneDayInr + oneDayPct from stats, so
-  //                        rerunning the animation with unchanged
-  //                        data (dev Replay) plays the same verdict.
+  //                        resolveVerdictTier). Fires after the
+  //                        jackpot ding's decay has cleared (~4530).
   //
   // WHY ROLLUP FIRES BEFORE THE CASCADE
   // ───────────────────────────────────
@@ -340,7 +335,7 @@ export function RevealDashboard({
     playSwoosh();
     const dingId = window.setTimeout(playDing, STUDIO_TIMING.PILL_BEGIN);
     const rollupId = window.setTimeout(
-      playRollup,
+      playRollupForReveal,
       STUDIO_TIMING.ROLLUP_SOUND_BEGIN
     );
     // Capture the 1D snapshot values at effect-run time so the
@@ -379,18 +374,16 @@ export function RevealDashboard({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {IS_DEV && (
-            /* DEV ONLY: replay-animation button. Tree-shaken out of
-               production bundles via the IS_DEV constant. Handy when
-               tuning STUDIO_TIMING or reordering the choreography —
-               tap replay instead of clicking Back → Submit each time.
-               Uses a distinct amber-tinted style so it's obviously
-               a dev affordance and not a real user control. */
+          {SHOW_STUDIO_REPLAY && (
+            /* Replay animation — remounts the reveal choreography.
+               Amber styling so it reads as a tooling control, not a
+               primary action. Flip SHOW_STUDIO_REPLAY off when done
+               recording / tuning. */
             <button
               type="button"
               onClick={() => setReplayCount((n) => n + 1)}
-              aria-label="Replay animation (dev)"
-              title="Replay animation (dev)"
+              aria-label="Replay animation"
+              title="Replay animation"
               className="flex h-8 items-center gap-1.5 rounded-md border border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)] px-2.5 text-xs text-[hsl(var(--warning))] transition-colors hover:bg-[hsl(var(--warning)/0.2)]"
             >
               <Play size={11} />
@@ -431,11 +424,9 @@ export function RevealDashboard({
           // Child animations (chart sweep + cell staggers + roll-ups)
           // provide all the visual entrance we need.
           <motion.div
-            // Key includes replayCount so the dev Replay button can
-            // force a full unmount/remount cycle → every animation
-            // restarts from t=0 (chart line-draw, pill fade,
-            // roll-ups, cell staggers). In production replayCount
-            // stays 0 forever, so the key is stable "content-0".
+            // Key includes replayCount so Replay can force a full
+            // unmount/remount → every animation restarts from t=0
+            // (chart line-draw, pill fade, roll-ups, cell staggers).
             key={`content-${replayCount}`}
             className="flex flex-col gap-4"
             initial={false}

@@ -6,7 +6,6 @@ import { GlassmorphicOrderEntryLanding } from "@/components/studio/GlassmorphicO
 import { RevealDashboard } from "@/components/studio/RevealDashboard";
 import { StudioClickPulse } from "@/components/studio/StudioClickPulse";
 import { StudioClickSound } from "@/components/studio/StudioClickSound";
-import { TestModeBanner } from "@/components/studio/TestModeBanner";
 import { getStudioData, type StudioData } from "@/app/studio/data";
 
 /**
@@ -102,7 +101,6 @@ export default function GlassmorphicStudioPage() {
     >
       <StudioClickSound />
       <StudioClickPulse />
-      <TestModeBanner />
       {stage === "entry" && (
         <GlassmorphicOrderEntryLanding
           onSubmitted={() => {

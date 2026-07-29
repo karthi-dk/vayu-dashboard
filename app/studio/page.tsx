@@ -6,7 +6,6 @@ import { OrderEntryLanding } from "@/components/studio/OrderEntryLanding";
 import { RevealDashboard } from "@/components/studio/RevealDashboard";
 import { StudioClickPulse } from "@/components/studio/StudioClickPulse";
 import { StudioClickSound } from "@/components/studio/StudioClickSound";
-import { TestModeBanner } from "@/components/studio/TestModeBanner";
 import { getStudioData, type StudioData } from "@/app/studio/data";
 
 /**
@@ -154,7 +153,6 @@ export default function StudioPage() {
           by default). Fires on pointerdown for immediate feedback,
           same target filter as StudioClickSound. Renders nothing. */}
       <StudioClickPulse />
-      <TestModeBanner />
       {stage === "entry" && (
         <OrderEntryLanding
           onSubmitted={() => {

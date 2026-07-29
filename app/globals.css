@@ -384,26 +384,12 @@
   color: white;
 }
 
-/* CelebrationOverlay backdrop — the shared Lottie overlay
- * (components/studio/CelebrationOverlay.tsx line 128) uses
- * `bg-background` for its full-viewport curtain, which resolves
- * to a solid dark indigo inside the glassmorphic scope thanks
- * to the --background var override. That paints an opaque
- * curtain over the aurora during the entry→celebrating→reveal
- * transition, breaking the visual continuity of the glass
- * palette.
- *
- * Fix: make the overlay backdrop transparent inside the scope
- * so the parent page's aurora gradient (which is
- * background-attachment: fixed and thus anchored to the viewport)
- * shows straight through beneath the Lottie. Neumorphic route
- * intentionally NOT patched here — its bg-background resolves
- * to the same soft blue-gray as the page shell, so the overlay
- * blends seamlessly on its own.
- *
- * Selector is deliberately narrow (fixed + inset-0 + z-40 +
- * bg-background) to avoid catching any future full-viewport
- * curtain that legitimately wants to opt out of the aurora. */
+/* CelebrationOverlay now portals to document.body (see
+ * CelebrationOverlay.tsx) so it is no longer a descendant of
+ * .studio-glassmorphic-scope. Glass aurora continuity is handled
+ * in the component via pathname → bg-transparent. The old
+ * descendant override is kept as a no-op safety net if a non-
+ * portaled copy is ever reintroduced during prototyping. */
 .studio-glassmorphic-scope
   .fixed.inset-0.z-40.bg-background {
   background-color: transparent !important;

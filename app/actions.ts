@@ -1184,3 +1184,35 @@ export async function saveRotation(input: {
     return err(e);
   }
 }
+
+/**
+ * Purge every Studio rehearsal row (`platform = 'test'`) from
+ * mf_transactions. These rows never bump fund_holdings / nw_daily, so
+ * no recompute is needed — just delete + revalidate studio/sync
+ * surfaces that list the ledger.
+ *
+ * Wired to the Sync page "Delete all test data" button so you don't
+ * need a one-off SQL sweep after recording sessions.
+ */
+export async function deleteStudioTestData(): Promise<
+  { ok: true; deleted: number } | { ok: false; error: string }
+> {
+  try {
+    const { data, error } = await sbServer
+      .from("mf_transactions")
+      .delete()
+      .eq("platform", "test")
+      .select("id");
+    if (error) throw error;
+
+    const deleted = data?.length ?? 0;
+    revalidatePath("/sync");
+    revalidatePath("/studio", "layout");
+    return { ok: true, deleted };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}

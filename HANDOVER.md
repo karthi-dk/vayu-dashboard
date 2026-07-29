@@ -1,15 +1,51 @@
-# Handover — Studio verdict system + sound variants
+# Handover — current context for the next agent
 
-**Landed:** 2026-07-29
-**Scope:** `/studio` verdict promotion (V1 → 4-tier taxonomy), verdict
-sound-variant framework, two pre-existing build blockers fixed.
-**Successor task:** none — the tree is green, defaults are set, UI
-ships all variants. This doc is a snapshot so the next agent can pick
-up context without reading the full chat history.
+**Latest app release:** `0.2.0` (2026-07-29) — see **[CHANGELOG.md](./CHANGELOG.md)**  
+**Production:** https://foliopulse.vercel.app  
+**Ship path:** push `main` → Vercel production (Git integration)
 
 ---
 
-## TL;DR for the next agent
+## TL;DR — release 0.2.0 (nav / studio UX)
+
+1. **Mobile hamburger** (`components/nav/MobileNav.tsx`) — sheet is
+   **portaled to `document.body`**. Do not nest `position:fixed` menus
+   under TopNav (`backdrop-blur` / overflow create a containing block
+   and clip the sheet to ~56px — that bug already shipped once).
+2. **Nav progress** — `NavigationProgress` + `app/loading.tsx`.
+3. **Studio confetti** — `CelebrationOverlay` portals + layout-stable
+   square sizing; wait for box measure before Lottie autoplay.
+4. **TEST MODE banner removed** — test rows still use `platform=test`;
+   purge via Sync → `DeleteStudioTestDataCard` /
+   `deleteStudioTestData`.
+5. **Replay on prod** — `SHOW_STUDIO_REPLAY = true` in
+   `RevealDashboard.tsx` (temporary). Flip to `false` after recording.
+6. **SignOutButton** is `"use client"` (required for MobileNav). Shared
+   routes live in `components/nav/navConfig.ts`.
+7. Windows local: `cross-env` in `package.json` `dev` / `start`.
+
+### Release process (keep this)
+
+1. Accumulate notes under `[Unreleased]` in `CHANGELOG.md`.
+2. On ship: cut `[x.y.z] — YYYY-MM-DD`, bump `package.json` `version`,
+   commit, `git push origin main`.
+3. Optionally tag: `git tag v0.2.0 && git push origin v0.2.0`.
+4. Reopen installed PWAs after deploy (SW does not cache pages).
+
+---
+
+# Handover — Studio verdict system + sound variants
+
+**Landed:** 2026-07-29  
+**Scope:** `/studio` verdict promotion (V1 → 4-tier taxonomy), verdict
+sound-variant framework, two pre-existing build blockers fixed.  
+**Note:** The section below remains the deep dive for Studio audio /
+verdict. For product UX / nav / deploy changes after that work, prefer
+**CHANGELOG.md** and the TL;DR above.
+
+---
+
+## TL;DR for the next agent (verdict / sounds)
 
 1. `/studio` is now on a **4-tier verdict system** (`big-green` |
    `green` | `flat` | `red`). The old 5-tier V2 preview is deleted;
@@ -21,8 +57,9 @@ up context without reading the full chat history.
 3. `next build` passes clean across all 24 routes. Two pre-existing
    errors (Lottie `speed` prop, `canvas-confetti` default import) were
    fixed as part of the handover.
-4. No pending TODOs from this task. See "Suggested follow-ups" below
-   for optional polish.
+4. No pending TODOs from the verdict task. See "Suggested follow-ups"
+   below for optional polish. For **0.2.0** follow-ups (Replay flag,
+   etc.) see CHANGELOG `[Unreleased]`.
 
 ---
 

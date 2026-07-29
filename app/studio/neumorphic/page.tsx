@@ -6,7 +6,6 @@ import { NeumorphicOrderEntryLanding } from "@/components/studio/NeumorphicOrder
 import { RevealDashboard } from "@/components/studio/RevealDashboard";
 import { StudioClickPulse } from "@/components/studio/StudioClickPulse";
 import { StudioClickSound } from "@/components/studio/StudioClickSound";
-import { TestModeBanner } from "@/components/studio/TestModeBanner";
 import { getStudioData, type StudioData } from "@/app/studio/data";
 
 /**
@@ -78,11 +77,9 @@ export default function NeumorphicStudioPage() {
   }, [stage]);
 
   return (
-    // Page-level neumorphic surface. Padding at the top gives the
-    // card a bit of breathing room from the TEST MODE banner
-    // (when NEXT_PUBLIC_FUNDS_TEST_MODE=true) and the top of the
-    // viewport on desktop. On mobile the card fills the width;
-    // desktop caps at max-w-md inside the card.
+    // Page-level neumorphic surface. `py-6` gives the card breathing
+    // room from the top of the viewport on desktop. On mobile the
+    // card fills the width; desktop caps at max-w-md inside the card.
     //
     // `studio-neumorphic-scope` is defined in app/globals.css. It
     // overrides Vayu's HSL theme variables (--background, --foreground,
@@ -94,7 +91,6 @@ export default function NeumorphicStudioPage() {
     <div className="studio-neumorphic-scope min-h-dvh bg-[#e0e5ec] py-6">
       <StudioClickSound />
       <StudioClickPulse />
-      <TestModeBanner />
       {stage === "entry" && (
         <NeumorphicOrderEntryLanding
           onSubmitted={() => {

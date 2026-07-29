@@ -4,6 +4,9 @@ Production deploys from the private GitHub repo `karthi-dk/vayu-dashboard`.
 Every push to `main` triggers a Vercel production build. Preview deploys
 run on other branches / PRs when enabled.
 
+**Live URL:** [https://foliopulse.vercel.app](https://foliopulse.vercel.app)  
+**Release notes:** [CHANGELOG.md](./CHANGELOG.md) (update on every ship)
+
 ## 0. Pre-flight
 
 The auth gate and PWA are already wired. Before the first deploy, make
@@ -38,15 +41,19 @@ auth secrets.
 1. Go to **https://vercel.com/new**
 2. Import **`karthi-dk/vayu-dashboard`** (GitHub integration must be
    authorized for the account/org).
-3. Framework: Next.js (auto-detected). Root directory: `.`
+3. Framework: **Next.js** (not "Other" — Edge middleware needs the
+   Next preset). Root directory: `.`
 4. **Do not deploy yet** — add env vars first (step 3).
 
 Or with the CLI (team Deekay):
 
 ```bash
-npx vercel link --yes --project vayu-dashboard --scope kdeekay
+npx vercel link --yes --project foliopulse --scope kdeekay
 npx vercel git connect   # if prompted, link the GitHub repo
 ```
+
+(Vercel project may appear as `foliopulse` / legacy `vayu-dashboard` —
+confirm the production alias `foliopulse.vercel.app` is attached.)
 
 ## 3. Set environment variables
 
@@ -60,7 +67,7 @@ Vercel dashboard → **Settings** → **Environment Variables**, or
 | `APP_USERNAME`                 | username at `/login`                     | You invent                                        |
 | `APP_PASSWORD`                 | password at `/login`                     | You invent                                        |
 | `APP_SESSION_SECRET`           | `openssl rand -base64 32` output         | You invent                                        |
-| `NEXT_PUBLIC_FUNDS_TEST_MODE`  | `true` / `false`                         | Studio test mode (see `.env.example`)             |
+| `NEXT_PUBLIC_FUNDS_TEST_MODE`  | `true` / `false`                         | Studio test writes (`platform=test`); no banner   |
 | `DHAN_TOKEN_ID`                | your Dhan static token                   | Dhan API dashboard (only if using)                |
 
 For each, enable **Production** and **Preview** (and Development if you
@@ -73,7 +80,7 @@ npx vercel --prod
 
 ## 4. First login
 
-- Open the production URL (e.g. `https://vayu-dashboard.vercel.app`).
+- Open **https://foliopulse.vercel.app**.
 - You'll be bounced to `/login`. Enter `APP_USERNAME` + `APP_PASSWORD`.
 - On success you land on the overview page. Session cookie is good for
   30 days.
@@ -101,12 +108,20 @@ npx vercel --prod
 PWA assets (`/manifest.webmanifest`, `/sw.js`, icons) are publicly
 reachable without login so Chrome can validate installability.
 
+The service worker is an installability shim only — it does **not**
+cache pages or API data. After a production deploy, reopen the
+installed app (or hard-refresh) to load the new build.
+
 ## 6. Redeploying after code changes
 
-Push to `main` — Vercel rebuilds and promotes production automatically.
+1. Update **[CHANGELOG.md](./CHANGELOG.md)** (`[Unreleased]` → version
+   section) and bump `package.json` `version` when cutting a release.
+2. Commit and push `main` — Vercel rebuilds and promotes production.
 
 ```bash
 git add -A && git commit -m "…" && git push origin main
+# optional release tag:
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
 Rotating secrets:

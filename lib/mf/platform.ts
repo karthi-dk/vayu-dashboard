@@ -48,7 +48,7 @@ export const PLATFORMS = [
   // stays in that isolation until either:
   //   • NEXT_PUBLIC_FUNDS_TEST_MODE flips to false, at which point
   //     future submits use the real platform value ('indmoney' etc.)
-  //   • A one-line SQL sweep purges the test corpus:
+  //   • Sync page → "Delete all test data" (or SQL):
   //       DELETE FROM mf_transactions WHERE platform = 'test';
   // The "muted" colour category surfaces these as grey chips in the
   // ledger — visually distinct from real trades but not alarming.

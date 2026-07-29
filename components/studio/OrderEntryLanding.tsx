@@ -55,7 +55,7 @@ import { unlockAudio } from "@/lib/studio/sounds";
  *   FORCED to 'test' on submit regardless of what's in the dropdown.
  *   The dropdown still shows the real platforms so you can rehearse
  *   the muscle memory of picking one, but the effective write is
- *   sentinel. The TestModeBanner above the form makes this obvious.
+ *   sentinel. Purge those rows later from Sync → Delete all test data.
  */
 
 const IS_TEST_MODE = process.env.NEXT_PUBLIC_FUNDS_TEST_MODE === "true";
