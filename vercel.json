@@ -1,7 +1,3 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "//1": "Vercel deploy config. Kept minimal so this file rarely changes.",
-  "//2": "Region defaults to Vercel's iad1 (US East). Leaving unset intentionally — you can pin regions in the Vercel dashboard (Project → Settings → Functions → Region) later if you notice latency, but for a personal read-heavy app the default is fine and lets Vercel pick the best PoP for your traffic origin.",
-  "//3": "Crons removed 2026-07-25 because middleware.ts now gates all /api/* routes behind the login cookie, and Vercel Cron doesn't send that cookie — so any scheduled hit to /api/refresh-mf-nav or /api/refresh-nps-nav would just get 307'd to /login and never actually refresh anything. Manual refresh via the nav 'NAVs' button still works.",
-  "//4": "To re-enable crons later: (1) add a CRON_SECRET env var in Vercel dashboard; (2) in the two refresh routes check `req.headers.get('authorization') === 'Bearer ' + process.env.CRON_SECRET` and short-circuit BEFORE the auth cookie check; (3) exempt the refresh paths in middleware.ts when that header is present; (4) restore the `crons` array below."
+  "$schema": "https://openapi.vercel.sh/vercel.json"
 }

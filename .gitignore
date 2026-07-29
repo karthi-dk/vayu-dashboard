@@ -29,3 +29,6 @@ Thumbs.db
 tracing.zip
 vayu-dashboard.zip
 *.zip
+
+# Keep .env.example trackable (Vercel CLI may append a broad .env* rule)
+!.env.example
