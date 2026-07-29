@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE, verifySession } from "@/lib/session";
+// Relative import required for Edge: Vercel rejects the `@/` alias as an
+// "unsupported module" when bundling middleware as an Edge Function.
+import { SESSION_COOKIE, verifySession } from "./lib/session";
 
 /**
  * Auth gate — runs on every request via the matcher below.
