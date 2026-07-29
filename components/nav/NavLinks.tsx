@@ -10,13 +10,15 @@ import {
 } from "@/lib/studio/themes";
 import { cn } from "@/lib/utils";
 import { NAV_LINKS, studioSectionActive } from "./navConfig";
+import { useIsDesktopNav } from "./useIsDesktopNav";
 
 /**
  * Desktop inline nav — Studio dropdown + primary routes.
- * Hidden below `md`; MobileNav owns the phone chrome.
+ * Only mounts when viewport ≥ 1024px (see useIsDesktopNav).
  */
 export function NavLinks() {
   const pathname = usePathname();
+  const isDesktop = useIsDesktopNav();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const studioActive = studioSectionActive(pathname);
@@ -41,8 +43,11 @@ export function NavLinks() {
     setOpen(false);
   }, [pathname]);
 
+  // SSR + phone: render nothing (MobileNav owns chrome).
+  if (!isDesktop) return null;
+
   return (
-    <nav className="hidden items-center gap-6 md:flex">
+    <nav className="flex items-center gap-6">
       <div ref={menuRef} className="relative">
         <button
           type="button"

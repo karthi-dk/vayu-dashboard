@@ -73,6 +73,17 @@ const config: Config = {
     },
   },
   plugins: [],
+  // Keep critical nav visibility utilities even if a file is missed
+  // by the content scanner (prod once shipped without md:flex/lg:flex).
+  safelist: [
+    "hidden",
+    "flex",
+    "md:flex",
+    "md:hidden",
+    "lg:flex",
+    "lg:hidden",
+    "max-lg:hidden",
+  ],
 };
 
 export default config;

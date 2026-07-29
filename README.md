@@ -158,9 +158,9 @@ as the existing 12 tables.
 
 ## Navigation (responsive)
 
-- **`md+`:** full horizontal TopNav (Studio dropdown + routes + freshness
+- **`lg+`:** full horizontal TopNav (Studio dropdown + routes + freshness
   chips + refresh + theme + sign out).
-- **Below `md`:** compact bar + hamburger sheet (`MobileNav`, portaled
+- **Below `lg`:** compact bar + hamburger sheet (`MobileNav`, portaled
   to `document.body` so TopNav `backdrop-blur` cannot clip it). Theme
   and sign out live in the sheet footer.
 - Soft navigations show a top progress bar (`NavigationProgress`) and

@@ -4,9 +4,8 @@ import { TimeAgo } from "@/components/ui/TimeAgo";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { MobileNav } from "./MobileNav";
 import { NavLinks } from "./NavLinks";
+import { DesktopNavActions } from "./DesktopNavActions";
 import { RefreshAllButton } from "./RefreshAllButton";
-import { SignOutButton } from "./SignOutButton";
-import { ThemeToggle } from "./ThemeToggle";
 import { sbServer as sb } from "@/lib/supabase";
 
 /**
@@ -169,12 +168,7 @@ export async function TopNav() {
               rationale on why this lives in TopNav rather than
               only on the Overview page. */}
           <RefreshAllButton />
-          {/* Theme + sign-out live in the mobile sheet below md so
-              the phone header stays: brand · chips · refresh · menu. */}
-          <div className="hidden items-center gap-1.5 md:flex">
-            <ThemeToggle />
-            <SignOutButton />
-          </div>
+          <DesktopNavActions />
           <MobileNav />
         </div>
       </div>

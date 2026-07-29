@@ -4,65 +4,66 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
 /**
- * Thin top-of-viewport progress bar for App Router navigations.
+ * Top progress bar for App Router navigations.
  *
- * Why this exists
- * ---------------
- * Soft navigations keep the current page painted until the next
- * route's RSC payload is ready. Without feedback, a slow Sync /
- * Portfolio fetch looks like a dead click — and users hammer the
- * nav. This bar starts on same-origin <a> clicks and clears when
- * the pathname changes.
+ * Soft navigations keep the current page painted until the RSC
+ * payload is ready — without feedback, taps feel dead. This bar
+ * starts on same-origin <a> clicks.
  *
- * Design notes
- * ------------
- * • 120ms show-delay so fast (prefetched) transitions never flash.
- * • 12s safety timeout so a cancelled / failed nav can't leave the
- *   bar stuck forever.
- * • Document capture-phase click listener covers TopNav, Studio
- *   theme links, in-page CTAs — anything using next/link or <a>.
+ * Mobile / iPhone notes
+ * --------------------
+ * • With `loading.tsx`, Next often updates the URL *before* the new
+ *   page paints. Stopping on any pathname change cancelled the bar
+ *   instantly — so users never saw it. We track the clicked target
+ *   and keep the bar up until that path lands (min ~280ms).
+ * • `top: 0` sits under the status bar / notch in standalone PWA.
+ *   We pin below `env(safe-area-inset-top)` and, when TopNav is
+ *   present, below the 56px header so the bar is on-screen.
  */
 export function NavigationProgress() {
   const pathname = usePathname();
   const [pending, setPending] = useState(false);
-  const [visible, setVisible] = useState(false);
-  const showDelayRef = useRef<number | null>(null);
+  const targetPathnameRef = useRef<string | null>(null);
   const safetyRef = useRef<number | null>(null);
+  const minVisibleRef = useRef<number | null>(null);
+  const startedAtRef = useRef(0);
 
   const clearTimers = () => {
-    if (showDelayRef.current != null) {
-      window.clearTimeout(showDelayRef.current);
-      showDelayRef.current = null;
-    }
     if (safetyRef.current != null) {
       window.clearTimeout(safetyRef.current);
       safetyRef.current = null;
+    }
+    if (minVisibleRef.current != null) {
+      window.clearTimeout(minVisibleRef.current);
+      minVisibleRef.current = null;
     }
   };
 
   const stop = () => {
     clearTimers();
+    targetPathnameRef.current = null;
     setPending(false);
-    setVisible(false);
   };
 
-  const start = () => {
+  const start = (nextPathname: string) => {
     clearTimers();
+    targetPathnameRef.current = nextPathname;
+    startedAtRef.current = Date.now();
     setPending(true);
-    setVisible(false);
-    // Only reveal if navigation is still pending after a short beat —
-    // avoids a flicker on instant transitions.
-    showDelayRef.current = window.setTimeout(() => {
-      setVisible(true);
-    }, 120);
     safetyRef.current = window.setTimeout(stop, 12_000);
   };
 
-  // Route committed → done.
+  // Finish when the navigated pathname matches the click target.
   useEffect(() => {
-    stop();
+    const target = targetPathnameRef.current;
+    if (!target || !pending) return;
+    if (pathname !== target) return;
+
+    const elapsed = Date.now() - startedAtRef.current;
+    const remain = Math.max(0, 280 - elapsed);
+    minVisibleRef.current = window.setTimeout(stop, remain);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
+  }, [pathname, pending]);
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -88,12 +89,11 @@ export function NavigationProgress() {
         return;
       }
       if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) {
+        return;
+      }
 
-      const nextPath = url.pathname + url.search;
-      const currentPath = window.location.pathname + window.location.search;
-      if (nextPath === currentPath) return;
-
-      start();
+      start(url.pathname);
     };
 
     document.addEventListener("click", onClick, true);
@@ -106,18 +106,23 @@ export function NavigationProgress() {
 
   if (!pending) return null;
 
+  const chromeHidden =
+    pathname === "/login" ||
+    pathname === "/studio" ||
+    pathname.startsWith("/studio/");
+
   return (
     <div
-      className="pointer-events-none fixed inset-x-0 top-0 z-[200] h-[2px] overflow-hidden"
+      className="pointer-events-none fixed inset-x-0 z-[200] h-1 overflow-hidden bg-[hsl(var(--primary)/0.15)]"
+      style={{
+        top: chromeHidden
+          ? "env(safe-area-inset-top, 0px)"
+          : "calc(env(safe-area-inset-top, 0px) + 3.5rem)",
+      }}
       role="progressbar"
-      aria-hidden={!visible}
-      aria-valuetext={visible ? "Loading page" : undefined}
+      aria-valuetext="Loading page"
     >
-      <div
-        className={`h-full w-full origin-left bg-[hsl(var(--primary))] shadow-[0_0_8px_hsl(var(--primary)/0.55)] transition-opacity duration-150 ${
-          visible ? "opacity-100 animate-nav-progress" : "opacity-0"
-        }`}
-      />
+      <div className="h-full w-full origin-left animate-nav-progress bg-[hsl(var(--primary))] shadow-[0_0_10px_hsl(var(--primary)/0.65)]" />
     </div>
   );
 }

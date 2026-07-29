@@ -10,6 +10,20 @@ at push time).
 
 ## [Unreleased]
 
+### Fixed
+
+- Raise hamburger breakpoint from `md` (768px) to `lg` (1024px) — at
+  tablet widths the full inline nav still clipped Settings and pushed
+  ThemeToggle / Sign out off-screen.
+- Navigation progress bar: keep visible until the clicked route lands
+  (URL can update before paint with `loading.tsx`), show immediately,
+  sit below iPhone safe-area + TopNav so it isn’t hidden under the
+  notch/status bar.
+- Mobile nav: drive hamburger vs desktop links with `matchMedia`
+  (1024px) instead of Tailwind `md:flex`/`lg:flex` alone — production
+  CSS had purged those utilities, so iPhone XR kept showing the full
+  overflowing link row with no menu button.
+
 ### Planned
 
 - Flip `SHOW_STUDIO_REPLAY` off in `RevealDashboard.tsx` when recording /

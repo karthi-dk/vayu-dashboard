@@ -13,14 +13,18 @@ import { cn } from "@/lib/utils";
 import { NAV_LINKS, studioSectionActive } from "./navConfig";
 import { ThemeToggle } from "./ThemeToggle";
 import { SignOutButton } from "./SignOutButton";
+import { useIsDesktopNav } from "./useIsDesktopNav";
 
 /**
  * Mobile chrome companion to NavLinks.
  *
- * Below `md`, TopNav only keeps brand + freshness + refresh; this
+ * Below 1024px, TopNav only keeps brand + freshness + refresh; this
  * hamburger opens a full-viewport sheet with every destination,
- * Studio themes, theme toggle, and sign out — so the header never
- * overflows the phone viewport.
+ * Studio themes, theme toggle, and sign out.
+ *
+ * Visibility is driven by useIsDesktopNav (matchMedia), not Tailwind
+ * `lg:hidden` — prod CSS previously purged responsive flex utilities,
+ * which left the desktop link row stuck visible on iPhone XR.
  *
  * The sheet is portaled to document.body. TopNav uses backdrop-blur
  * (and overflow-x-hidden), which creates a containing block for
@@ -29,6 +33,7 @@ import { SignOutButton } from "./SignOutButton";
  */
 export function MobileNav() {
   const pathname = usePathname();
+  const isDesktop = useIsDesktopNav();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const titleId = useId();
@@ -61,7 +66,7 @@ export function MobileNav() {
       ? createPortal(
           <div
             id="mobile-nav-sheet"
-            className="fixed inset-0 z-[60] md:hidden"
+            className="fixed inset-0 z-[60]"
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
@@ -166,8 +171,11 @@ export function MobileNav() {
         )
       : null;
 
+  // Desktop confirmed → hamburger not needed.
+  if (isDesktop) return null;
+
   return (
-    <div className="md:hidden">
+    <div>
       <button
         type="button"
         aria-expanded={open}
