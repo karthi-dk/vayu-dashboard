@@ -22,7 +22,7 @@
 // build artifact under /_next/) would break the "scope" contract with
 // the browser and cause the PWA to uninstall silently.
 
-const SW_VERSION = "vayu-sw-v1";
+const SW_VERSION = "vayu-sw-v2";
 
 self.addEventListener("install", (event) => {
   // Take over as soon as we're activated instead of waiting for all
@@ -35,7 +35,16 @@ self.addEventListener("activate", (event) => {
   // Claim any pages already open on this origin so they use this SW
   // (rather than remaining under the previous version, which would
   // require a page reload to swap).
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      // Defensive cleanup: this SW intentionally does not cache, but
+      // purge any legacy caches from prior experiments to avoid stale
+      // app-shell behavior in installed PWA contexts.
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+      await self.clients.claim();
+    })()
+  );
 });
 
 self.addEventListener("fetch", (event) => {

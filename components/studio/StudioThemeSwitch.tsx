@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
  *
  * TopNav is hidden on /studio* for recording. This pill sits top-right
  * so it stays out of the middle of the frame while still giving
- * one-tap deep links across Classic / Clay / Glass / Soft.
+ * one-tap deep links across Classic / Clay / Glass / Soft / Skeuo.
  */
 export function StudioThemeSwitch() {
   const pathname = usePathname();

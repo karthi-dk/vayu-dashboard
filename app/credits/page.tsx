@@ -1,4 +1,5 @@
 import { getCreditsData } from "@/lib/queries";
+import { withTransientRetry } from "@/lib/transientRetry";
 import { CreditsLog } from "@/components/credits/CreditsLog";
 import { MfContributionsLog } from "@/components/credits/MfContributionsLog";
 import { LedgerHeadline } from "@/components/credits/LedgerHeadline";
@@ -12,7 +13,7 @@ export default async function CreditsPage() {
     mfLedger,
     currentMonthTotals,
     mfPendingCount,
-  } = await getCreditsData();
+  } = await withTransientRetry(() => getCreditsData());
 
   // Rendered server-side so the month string is stable regardless of
   // the client's timezone. UTC month = the one whose totals the

@@ -18,6 +18,10 @@ import {
   STUDIO_TIMING,
 } from "@/components/studio/RevealDashboard";
 import { RollUpNumber } from "@/components/studio/RollUpNumber";
+import {
+  recordStudioInteraction,
+  type StudioTelemetryTheme,
+} from "@/lib/studio/recordingTelemetry";
 import { cn, fmtCompactINR, fmtDateShortIST, fmtINR } from "@/lib/utils";
 
 /**
@@ -190,13 +194,20 @@ function sliceByTimeframe(
 export function GrowthChart({
   data,
   shouldAnimate = false,
+  telemetryRunId,
+  telemetryTheme = "unknown",
 }: {
   data: StudioChartPoint[];
   /** Toggles the full choreography: chart line-draw + pill fade-in
    *  + number roll-ups. Off = instant static render (skip path). */
   shouldAnimate?: boolean;
+  /** Shared telemetry run id from RevealDashboard. */
+  telemetryRunId?: string;
+  /** Theme tag for per-variant consistency metrics. */
+  telemetryTheme?: StudioTelemetryTheme;
 }) {
   const [timeframe, setTimeframe] = useState<TimeframeCode>(DEFAULT_TIMEFRAME);
+  const [chartGlowCycle, setChartGlowCycle] = useState(0);
   // ENTRANCE-ONLY ANIMATION GATE
   // ────────────────────────────
   // Recharts's `isAnimationActive` retriggers the line-draw on
@@ -220,6 +231,7 @@ export function GrowthChart({
   const [entering, setEntering] = useState<boolean>(shouldAnimate);
   useEffect(() => {
     if (!shouldAnimate) return;
+    setChartGlowCycle((n) => n + 1);
     const id = window.setTimeout(
       () => setEntering(false),
       STUDIO_TIMING.CHART_DURATION + 200
@@ -311,6 +323,20 @@ export function GrowthChart({
     [lastValued]
   );
 
+  const selectTimeframe = (next: TimeframeCode): void => {
+    if (next === timeframe) return;
+    const previous = timeframe;
+    setTimeframe(next);
+    setChartGlowCycle((n) => n + 1);
+    if (!telemetryRunId) return;
+    recordStudioInteraction({
+      runId: telemetryRunId,
+      theme: telemetryTheme,
+      name: "chart.timeframe.change",
+      metadata: { from: previous, to: next },
+    });
+  };
+
   if (sliced.length === 0) {
     return (
       <section
@@ -328,8 +354,19 @@ export function GrowthChart({
   return (
     <section
       aria-label="Growth chart"
-      className="relative w-full"
+      className="relative w-full overflow-hidden"
     >
+      {chartGlowCycle > 0 && (
+        <motion.div
+          key={`chart-glow-${chartGlowCycle}-${timeframe}`}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-8 left-[-35%] z-[1] w-[45%] rounded-full bg-gradient-to-r from-transparent via-[hsl(var(--primary)/0.22)] to-transparent blur-2xl"
+          initial={{ opacity: 0, x: "0%" }}
+          animate={{ opacity: [0, 0.55, 0], x: ["0%", "220%"] }}
+          transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+        />
+      )}
+
       {/* Current-value pill (top-right, floats over the chart).
           When shouldAnimate=true, the pill fades in at ~1.4s (matched
           to the last third of the chart's line-draw sweep) and the
@@ -357,6 +394,15 @@ export function GrowthChart({
               animate={shouldAnimate}
               delay={STUDIO_TIMING.PILL_BEGIN}
               duration={STUDIO_TIMING.PILL_DURATION}
+              telemetry={
+                telemetryRunId
+                  ? {
+                      runId: telemetryRunId,
+                      theme: telemetryTheme,
+                      metric: "pill.value",
+                    }
+                  : undefined
+              }
             />
           </div>
           {gainPct != null && (
@@ -374,6 +420,15 @@ export function GrowthChart({
                 animate={shouldAnimate}
                 delay={STUDIO_TIMING.PILL_BEGIN}
                 duration={STUDIO_TIMING.PILL_DURATION}
+                telemetry={
+                  telemetryRunId
+                    ? {
+                        runId: telemetryRunId,
+                        theme: telemetryTheme,
+                        metric: "pill.gainPct",
+                      }
+                    : undefined
+                }
               />
             </div>
           )}
@@ -390,6 +445,15 @@ export function GrowthChart({
                 animate={shouldAnimate}
                 delay={STUDIO_TIMING.PILL_BEGIN}
                 duration={STUDIO_TIMING.PILL_DURATION}
+                telemetry={
+                  telemetryRunId
+                    ? {
+                        runId: telemetryRunId,
+                        theme: telemetryTheme,
+                        metric: "pill.nextMilestonePct",
+                      }
+                    : undefined
+                }
               />
             </div>
           )}
@@ -496,7 +560,7 @@ export function GrowthChart({
             <button
               key={t.code}
               type="button"
-              onClick={() => setTimeframe(t.code)}
+              onClick={() => selectTimeframe(t.code)}
               className={cn(
                 "rounded px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors",
                 timeframe === t.code

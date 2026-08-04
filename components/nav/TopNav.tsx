@@ -8,6 +8,12 @@ import { DesktopNavActions } from "./DesktopNavActions";
 import { RefreshAllButton } from "./RefreshAllButton";
 import { sbServer as sb } from "@/lib/supabase";
 
+type NavFundRow = {
+  fund_code: string;
+  fund_name: string;
+  nav_date: string | null;
+};
+
 /**
  * TWO FRESHNESS INDICATORS
  * ------------------------
@@ -76,13 +82,57 @@ async function latestNavRefresh(): Promise<string | null> {
   return candidates[candidates.length - 1];
 }
 
+async function mfFreshStaleSummary(): Promise<{
+  headlineNavDate: string | null;
+  fresh: NavFundRow[];
+  stale: NavFundRow[];
+}> {
+  const { data, error } = await sb
+    .from("fund_holdings")
+    .select("fund_code,fund_name,nav_date")
+    .order("fund_code", { ascending: true });
+  if (error || !data || data.length === 0) {
+    return { headlineNavDate: null, fresh: [], stale: [] };
+  }
+
+  const rows = data as NavFundRow[];
+  const freq = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.nav_date) continue;
+    freq.set(r.nav_date, (freq.get(r.nav_date) ?? 0) + 1);
+  }
+
+  let headlineNavDate: string | null = null;
+  let bestCount = 0;
+  for (const [d, count] of freq.entries()) {
+    if (
+      count > bestCount ||
+      (count === bestCount && (headlineNavDate === null || d > headlineNavDate))
+    ) {
+      headlineNavDate = d;
+      bestCount = count;
+    }
+  }
+
+  if (!headlineNavDate) {
+    return { headlineNavDate: null, fresh: [], stale: [] };
+  }
+
+  const fresh = rows.filter((r) => r.nav_date === headlineNavDate);
+  const stale = rows.filter(
+    (r) => r.nav_date != null && r.nav_date < headlineNavDate
+  );
+  return { headlineNavDate, fresh, stale };
+}
+
 export async function TopNav() {
-  const [lastSync, lastNav] = await Promise.all([
+  const [lastSync, lastNav, mfSummary] = await Promise.all([
     latestHoldingsSync(),
     latestNavRefresh(),
+    mfFreshStaleSummary(),
   ]);
   return (
-    <header className="sticky top-0 z-40 overflow-x-hidden border-b border-border bg-background/80 backdrop-blur">
+    <header className="sticky top-0 z-40 overflow-visible border-b border-border bg-background/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-4 sm:gap-8">
           <Link
@@ -153,6 +203,40 @@ export async function TopNav() {
                         })
                       : "Not refreshed yet"}
                   </div>
+                  {mfSummary.headlineNavDate && (
+                    <div className="rounded border border-border/40 bg-background/25 p-2 text-[10px] leading-snug">
+                      <div className="rounded border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.12)] px-2 py-1 text-[hsl(var(--success))]">
+                        <span className="font-semibold">
+                          <span
+                            aria-hidden="true"
+                            className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))] align-middle"
+                          />
+                          Fresh ({mfSummary.fresh.length})
+                        </span>{" "}
+                        <span className="font-medium">
+                          {mfSummary.fresh.map((f) => f.fund_code).join(", ")}
+                        </span>
+                      </div>
+                      {mfSummary.stale.length > 0 && (
+                        <div className="mt-1 rounded border border-[hsl(var(--warning)/0.42)] bg-[hsl(var(--warning)/0.14)] px-2 py-1 text-[hsl(var(--warning))]">
+                          <span className="font-semibold">
+                            <span
+                              aria-hidden="true"
+                              className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[hsl(var(--warning))] align-middle"
+                            />
+                            Stale ({mfSummary.stale.length})
+                          </span>{" "}
+                          <span className="font-medium">
+                            {mfSummary.stale
+                              .map((f) =>
+                                `${f.fund_code}${f.nav_date ? `(${new Date(f.nav_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })})` : ""}`
+                              )
+                              .join(", ")}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="opacity-60">
                     Resets on the daily 6am IST cron or a click of the
                     refresh icon. Tells you if your prices (and 1D

@@ -14,16 +14,15 @@ import { Card } from "@/components/ui/Card";
 import { RangeSelector } from "@/components/ui/RangeSelector";
 import { cn, fmtCompactINR, fmtDateShort, fmtL } from "@/lib/utils";
 import { filterByRange, useChartRange } from "@/lib/useChartRange";
-import type { NwRow, RetirementCredit } from "@/lib/queries";
-import type { NwAttribution } from "@/lib/nwAttribution";
-import { computeNwAttribution } from "@/lib/nwAttribution";
+import type { NwPoint, NwAttribution } from "@/lib/nwReconstruct";
+import { computeNwAttribution } from "@/lib/nwReconstruct";
 
 // Enriched row that carries a "delta since reference" figure alongside
 // the raw NW value. The reference is the first snapshot we have in the
 // current year (which for a fresh dashboard means "first snapshot ever").
 // isTrueYtd flips only when the reference is genuinely close to Jan 1 —
 // otherwise we render "since {date}" instead of the misleading "YTD".
-type EnrichedNwRow = NwRow & {
+type EnrichedNwRow = NwPoint & {
   deltaSinceStart: number;
   deltaStartDate: string | null;
   isTrueYtd: boolean;
@@ -81,15 +80,14 @@ function TrendTooltip({ active, payload }: {
  * summary numbers track the range picker — pick 1M and both hero
  * and math reflect the last month's delta, not all-time.
  *
- * Attribution is recomputed on every range change from `credits` +
- * the filtered slice of `history`. See lib/nwAttribution.
+ * Attribution is recomputed on every range change from the filtered
+ * slice of the reconstructed history (exact — contributions vs growth
+ * from cumulative-contribution deltas). See lib/nwReconstruct.
  */
 export function NWTrendChart({
   history,
-  credits,
 }: {
-  history: NwRow[];
-  credits: RetirementCredit[];
+  history: NwPoint[];
 }) {
   const { range, setRange } = useChartRange(STORAGE_KEY, "ALL");
 
@@ -140,8 +138,8 @@ export function NWTrendChart({
   // the raw filtered history (not rowsWithYtd — but EnrichedNwRow
   // extends NwRow so the fields we care about are present).
   const attribution = useMemo(
-    () => computeNwAttribution(filtered, credits),
-    [filtered, credits]
+    () => computeNwAttribution(filtered),
+    [filtered]
   );
 
   const rangeLabel = useMemo(() => {

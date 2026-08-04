@@ -2,16 +2,18 @@ import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn, fmtDateShort, fmtINR, splitL } from "@/lib/utils";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { NwDeltasStrip } from "@/components/overview/NwDeltasStrip";
-import type { NwDelta, NwRow } from "@/lib/queries";
+import type { NwDelta, NwRow, RetirementCredit } from "@/lib/queries";
 
 export function HeadlineNW({
   latest,
   prev,
   deltas = [],
+  credits = [],
 }: {
   latest: NwRow | null;
   prev: NwRow | null;
   deltas?: NwDelta[];
+  credits?: RetirementCredit[];
 }) {
   if (!latest) {
     return (
@@ -38,11 +40,14 @@ export function HeadlineNW({
   //         scheme, computed by refresh-nps-nav on rotation days and
   //         auto-derived by recomputeNwDaily on log-write days from
   //         nps_state's *_nav_prev columns. Also deposit-immune.
-  //   EPF → snapshot diff — usually ₹0 (EPF is a step-change asset:
-  //         payroll and interest credits landing on discrete days
-  //         recorded via the /credits ledger). On credit-event days
-  //         the EPF component correctly spikes into the headline so
-  //         the total NW change isn't silently understated.
+  //   EPF → interest credits from the /credits ledger dated in the
+  //         window — deposit-immune, matching MF/NPS. EPF has no daily
+  //         market move; its only growth is interest (usually annual),
+  //         so payroll credits (money-in) must NOT spike the headline.
+  //         Reading the ledger's 'interest' events instead of an
+  //         epf_estimate snapshot diff also makes this robust to
+  //         backdated payroll credits, whose balance step lands on the
+  //         log-day nw_daily row rather than on the credit_date.
   //
   // Why we DON'T use `latest.total_nw − prev.total_nw`:
   //   (a) Groww's MF 1D and the MF snapshot diff diverge by ~₹1-2K/day
@@ -67,7 +72,18 @@ export function HeadlineNW({
       : prev
         ? latest.nps_value - prev.nps_value
         : 0;
-  const epfComponent = prev ? latest.epf_estimate - prev.epf_estimate : 0;
+  const epfComponent =
+    prev != null
+      ? credits
+          .filter(
+            (c) =>
+              c.source === "EPF" &&
+              c.credit_type === "interest" &&
+              c.credit_date > prev.date &&
+              c.credit_date <= latest.date
+          )
+          .reduce((sum, c) => sum + Number(c.amount_inr), 0)
+      : 0;
   const deltaInr: number | null =
     prev || mfChipInr != null || npsChipInr != null
       ? mfComponent + npsComponent + epfComponent
@@ -106,7 +122,7 @@ export function HeadlineNW({
           <Tooltip
             content={
               mfChipInr != null
-                ? `Change since ${prevDateLabel ?? "prev"}: MF (Groww 1D) + NPS snapshot diff + EPF snapshot diff. EPF is usually flat (payroll credits monthly, interest annually) — it only contributes on step-change days.`
+                ? `Change since ${prevDateLabel ?? "prev"}: MF (Groww 1D) + NPS 1D + EPF interest — deposit-immune, so payroll/contributions never count as growth. EPF only moves here when interest is credited.`
                 : `Sum of snapshot diffs since ${prevDateLabel ?? "prev"}. MF will switch to Groww's 1D after next sync.`
             }
           >

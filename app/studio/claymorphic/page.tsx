@@ -93,6 +93,7 @@ export default function ClaymorphicStudioPage() {
           }}
           refreshKey={refreshKey}
           initialData={preloadedData}
+          studioTheme="claymorphic"
         />
       )}
     </div>

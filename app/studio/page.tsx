@@ -185,6 +185,7 @@ export default function StudioPage() {
           }}
           refreshKey={refreshKey}
           initialData={preloadedData}
+          studioTheme="classic"
         />
       )}
     </div>

@@ -126,6 +126,7 @@ export default function GlassmorphicStudioPage() {
           }}
           refreshKey={refreshKey}
           initialData={preloadedData}
+          studioTheme="glassmorphic"
         />
       )}
     </div>

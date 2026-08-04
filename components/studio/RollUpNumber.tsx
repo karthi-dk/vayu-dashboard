@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  recordStudioRollupSample,
+  type StudioTelemetryTheme,
+} from "@/lib/studio/recordingTelemetry";
 
 /**
  * RollUpNumber — animated number that eases from 0 → `value` over
@@ -53,6 +57,7 @@ export function RollUpNumber({
   animate = true,
   format,
   className,
+  telemetry,
 }: {
   /** Target number to roll up to. */
   value: number;
@@ -71,6 +76,13 @@ export function RollUpNumber({
   /** Passed through to the outer span so callers can size / colour
    *  the number to match their layout. */
   className?: string;
+  /** Optional roll-up timing telemetry context propagated from
+   *  RevealDashboard. */
+  telemetry?: {
+    runId: string;
+    theme: StudioTelemetryTheme;
+    metric: string;
+  };
 }) {
   const [displayed, setDisplayed] = useState<number>(animate ? 0 : value);
   // Keep the latest value in a ref so a target-value change mid-
@@ -79,6 +91,9 @@ export function RollUpNumber({
   // back to zero" every time — jarring on camera.
   const displayedRef = useRef<number>(displayed);
   displayedRef.current = displayed;
+  const telemetryRunId = telemetry?.runId;
+  const telemetryTheme = telemetry?.theme;
+  const telemetryMetric = telemetry?.metric;
 
   useEffect(() => {
     // Reduced-motion short-circuit — render final value instantly.
@@ -99,6 +114,19 @@ export function RollUpNumber({
         setDisplayed(startValue + (value - startValue) * eased);
         if (progress < 1) {
           raf = requestAnimationFrame(tick);
+        } else if (
+          telemetryRunId != null &&
+          telemetryTheme != null &&
+          telemetryMetric != null
+        ) {
+          recordStudioRollupSample({
+            runId: telemetryRunId,
+            theme: telemetryTheme,
+            metric: telemetryMetric,
+            targetDurationMs: duration,
+            actualDurationMs: elapsed,
+            delayMs: delay,
+          });
         }
       };
       raf = requestAnimationFrame(tick);
@@ -108,7 +136,15 @@ export function RollUpNumber({
       window.clearTimeout(timeoutId);
       if (raf != null) cancelAnimationFrame(raf);
     };
-  }, [value, duration, delay, animate]);
+  }, [
+    animate,
+    delay,
+    duration,
+    telemetryMetric,
+    telemetryRunId,
+    telemetryTheme,
+    value,
+  ]);
 
   return <span className={className}>{format(displayed)}</span>;
 }

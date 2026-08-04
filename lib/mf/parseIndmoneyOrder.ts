@@ -42,6 +42,7 @@ export type ParsedIndmoneyOrder = {
   fund_name_raw: string | null;
   tx_type: "purchase" | "redemption";
   gross_amount: number | null; // "Buy Amount" / "Sell Amount" — pre-stamp-duty
+  nav: number | null; // explicit NAV value when present in field_list
   order_date: string | null; // YYYY-MM-DD
   nav_date: string | null; // YYYY-MM-DD
   nav_date_differs: boolean; // true if nav_date !== order_date
@@ -128,6 +129,43 @@ function findFundNameRaw(payload: unknown): string | null {
   return found;
 }
 
+function isNavValueLabel(label: string): boolean {
+  // Keep this broad enough to catch "NAV", "Applied NAV", etc.,
+  // but exclude "NAV Date" which is handled separately.
+  return label.startsWith("nav") && !label.startsWith("nav date");
+}
+
+function findNavFromLooseText(node: unknown): number | null {
+  // Matches strings like "NAV 128.3030", "Nav: 126.20", "@ NAV 79.1234".
+  // Requiring a decimal avoids false hits on "NAV Date 29 Jul 2026".
+  const NAV_RE = /\bnav\b[^0-9]{0,12}([0-9]+\.[0-9]{2,6})/i;
+
+  function walk(value: unknown): number | null {
+    if (value == null) return null;
+    if (typeof value === "string") {
+      const m = NAV_RE.exec(value);
+      if (!m) return null;
+      const n = Number(m[1]);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    }
+    if (typeof value !== "object") return null;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = walk(item);
+        if (found != null) return found;
+      }
+      return null;
+    }
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      const found = walk((value as Record<string, unknown>)[key]);
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  return walk(node);
+}
+
 export function parseIndmoneyOrderJson(raw: string): ParsedIndmoneyOrder {
   const warnings: string[] = [];
 
@@ -140,6 +178,7 @@ export function parseIndmoneyOrderJson(raw: string): ParsedIndmoneyOrder {
       fund_name_raw: null,
       tx_type: "purchase",
       gross_amount: null,
+      nav: null,
       order_date: null,
       nav_date: null,
       nav_date_differs: false,
@@ -168,6 +207,7 @@ export function parseIndmoneyOrderJson(raw: string): ParsedIndmoneyOrder {
 
   let txType: "purchase" | "redemption" = "purchase";
   let grossAmount: number | null = null;
+  let nav: number | null = null;
   for (const [label, value] of fields) {
     if (label.startsWith("buy amount")) {
       txType = "purchase";
@@ -175,10 +215,21 @@ export function parseIndmoneyOrderJson(raw: string): ParsedIndmoneyOrder {
     } else if (label.startsWith("sell amount") || label.startsWith("redeem amount")) {
       txType = "redemption";
       grossAmount = parseIndmoneyAmount(value);
+    } else if (isNavValueLabel(label)) {
+      // Keep the first parseable NAV if multiple NAV-ish labels are
+      // present in the payload (rare but possible in richer widgets).
+      if (nav == null) {
+        const parsed = parseIndmoneyAmount(value);
+        if (parsed != null && parsed > 0) nav = parsed;
+      }
     }
   }
   if (grossAmount == null) {
     warnings.push('No "Buy Amount" / "Sell Amount" row found.');
+  }
+
+  if (nav == null) {
+    nav = findNavFromLooseText(payload);
   }
 
   let orderDateRaw: string | null = null;
@@ -204,6 +255,9 @@ export function parseIndmoneyOrderJson(raw: string): ParsedIndmoneyOrder {
   if (navDateRaw && !navDate) {
     warnings.push(`Found "NAV Date" but couldn't parse "${navDateRaw}".`);
   }
+  if (nav == null) {
+    warnings.push('No parseable "NAV" value row found.');
+  }
   if (!orderDate) warnings.push('No "Order Date" row found.');
   if (!navDate) warnings.push('No "NAV Date" row found.');
 
@@ -212,6 +266,7 @@ export function parseIndmoneyOrderJson(raw: string): ParsedIndmoneyOrder {
     fund_name_raw: fundNameRaw,
     tx_type: txType,
     gross_amount: grossAmount,
+    nav,
     order_date: orderDate,
     nav_date: navDate,
     nav_date_differs: !!orderDate && !!navDate && orderDate !== navDate,

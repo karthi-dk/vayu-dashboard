@@ -6,6 +6,7 @@ import { SectorConcentrationStrip } from "@/components/portfolio/SectorConcentra
 import { TopStocksCard } from "@/components/portfolio/TopStocksCard";
 import { CrossFundOverlap } from "@/components/portfolio/CrossFundOverlap";
 import { getPortfolioData } from "@/lib/queries";
+import { withTransientRetry } from "@/lib/transientRetry";
 import { fmtL } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -49,7 +50,7 @@ export default async function PortfolioPage() {
     crossFundOverlap,
     sectorConcentration,
     stocksBySector,
-  } = await getPortfolioData();
+  } = await withTransientRetry(() => getPortfolioData());
 
   return (
     <div className="flex flex-col gap-8">
@@ -126,7 +127,7 @@ export default async function PortfolioPage() {
       {/* HoldingsTable — sortable columns, "% of NW", and row click
           opens FundDetailsModal (same modal used by Fetch fund
           holdings on the Sync page) with the per-fund cap breakdown. */}
-      <HoldingsTable funds={funds} totalNw={totalNw} />
+      <HoldingsTable funds={funds} mfTotal={mfTotal} />
 
       {/* A — Top 10 aggregated look-through positions. Answers "what
           are my actual biggest stock bets?" — a question the per-fund

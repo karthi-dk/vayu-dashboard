@@ -17,9 +17,10 @@
  * subsequent `playClick()` dispatches to that variant.
  *
  * All synthesis is done with the Web Audio API — no audio files,
- * ~5-6KB bundle overhead. If a matching MP3 exists under
- * `/assets/sounds/{name}.mp3` at runtime, the module prefers it over
- * the synth (drop-in override slot for hand-recorded ASMR clips).
+ * ~5-6KB bundle overhead. If `NEXT_PUBLIC_STUDIO_MP3_OVERRIDES=true`
+ * and a matching MP3 exists under `/assets/sounds/{name}.mp3`, the
+ * module prefers it over the synth (drop-in override slot for
+ * hand-recorded ASMR clips).
  */
 
 // ── Types ────────────────────────────────────────────────────────
@@ -247,6 +248,8 @@ let audioCtx: Ctx | null = null;
 const mp3Cache: Partial<Record<SoundName, HTMLAudioElement>> = {};
 
 let mp3ProbeStarted = false;
+const MP3_OVERRIDES_ENABLED =
+  process.env.NEXT_PUBLIC_STUDIO_MP3_OVERRIDES === "true";
 
 // ── Audio unlock ─────────────────────────────────────────────────
 
@@ -275,6 +278,7 @@ export async function unlockAudio(): Promise<void> {
 
 function startMp3Probe(): void {
   if (mp3ProbeStarted || typeof window === "undefined") return;
+  if (!MP3_OVERRIDES_ENABLED) return;
   mp3ProbeStarted = true;
   const names: SoundName[] = ["click", "swoosh", "ding", "rollup", "cracker"];
   for (const name of names) {

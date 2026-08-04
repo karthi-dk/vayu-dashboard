@@ -6,6 +6,49 @@
 
 ---
 
+## TL;DR — unreleased (Overview data accuracy)
+
+Since 0.2.0, three data-accuracy features landed on the Overview page.
+All reconciled against source; **no DB migration** (the one-time
+`epf_state` split correction + corrected `index_levels` rows were written
+to the shared Supabase, already live). Build is green; `CHANGELOG.md`
+`[Unreleased]` is updated but **not yet cut to a version**.
+
+1. **EPF · Growth breakdown** (contributions vs interest, multi-year).
+   - Generator: `scripts/gen-epf-history.py` (pypdf; reads the EPFO
+     passbook PDFs in `~/Documents/EPFO PASSBOOK`) → emits committed
+     static `lib/epf/epfHistory.generated.ts` (95 monthly points,
+     pension/EPS excluded). Has built-in reconciliation asserts and
+     aborts on any mismatch. **Re-run it when new passbooks arrive.**
+   - `lib/epf/epfHistory.ts` → `buildEpfHistory()` + `EPF_TOTALS`.
+     Chart: `components/overview/EpfGrowthBreakdown.tsx`.
+   - Reconciled totals: contributions ₹16,25,975 + interest ₹2,96,970
+     = value ₹19,22,945 (lifetime return 18.26%).
+2. **Multi-year Net Worth** — `lib/nwReconstruct.ts` forward-fills the
+   union of MF/NPS/EPF history from an inception ₹0 point;
+   `computeNwAttribution(window)` is exact by construction
+   (deposits = Δcumulative-contribution, growth = Δvalue − deposits).
+   Replaced ledger-based `lib/nwAttribution.ts` (**deleted**;
+   `NwAttribution` type moved into `nwReconstruct.ts`). `NWTrendChart`
+   and `NWCompositionChart` now take `history={nwHistory}` from
+   `getOverviewData`.
+3. **Index highs null-gap fix** — `lib/indexLevels/yahooClient.ts`.
+   Yahoo intermittently drops a real trading session as a null-OHLC
+   daily bar (did so for the NSE indices on 2026-08-03). The code now
+   recovers that session's close from the intraday feed
+   (`range=5d&interval=1h`) and feeds it into BOTH the "Today %" and the
+   ATH/52W/3M peak columns — previously "Today" could span multiple
+   sessions (even wrong sign) and a dropped record day made an index
+   read 0.0% ("at its high") when it was actually below.
+
+**Local diagnostics gotchas:** Node scripts hitting Supabase need the
+`NODE_TLS_REJECT_UNAUTHORIZED=0` prefix (corporate self-signed proxy).
+`tsx` is NOT installed and `npx tsx` tries to install over that proxy —
+verify pure-TS logic with a self-contained plain-`node` `.mjs` copy
+instead. See `/memories/repo/build-notes.md` for the full play-by-play.
+
+---
+
 ## TL;DR — release 0.2.0 (nav / studio UX)
 
 1. **Mobile hamburger** (`components/nav/MobileNav.tsx`) — sheet is

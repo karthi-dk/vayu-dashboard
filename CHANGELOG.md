@@ -10,8 +10,26 @@ at push time).
 
 ## [Unreleased]
 
+### Added
+
+- **EPF · Growth breakdown** — multi-year EPF chart (contributions vs
+  interest, Feb 2019 → now) reconstructed from EPFO passbooks; the
+  wealth-composition EPF and net-worth buckets are now passbook-accurate
+  (no longer flagged "estimated").
+- **Multi-year Net Worth** — Net Worth Trend and Composition charts now
+  extend from inception (₹0) using reconstructed MF / NPS / EPF history,
+  with exact deposits-vs-growth attribution on every window.
+
 ### Fixed
 
+- **Index "Today" move** — when Yahoo drops a session's daily bar (null
+  OHLC — it did for the NSE indices on 2026-08-03), recover that
+  session's close from the intraday feed instead of silently falling
+  back to an earlier day. Previously "Today" could span multiple
+  sessions and even show the wrong sign (up when actually down).
+- **Index 3M / 52W / ATH columns** — feed the recovered close into the
+  peak calc too, so a dropped record session no longer makes an index
+  wrongly read 0.0% ("at its high") when it is actually below it.
 - Raise hamburger breakpoint from `md` (768px) to `lg` (1024px) — at
   tablet widths the full inline nav still clipped Settings and pushed
   ThemeToggle / Sign out off-screen.

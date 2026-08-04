@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { cn, fmtDateShort, fmtINR, fmtPct } from "@/lib/utils";
+import { cn, fmtDate, fmtDateShort, fmtINR, fmtPct } from "@/lib/utils";
 import type { CapType, Fund, FundHoldingDetail } from "@/lib/queries";
 import { FundDetailsModal } from "@/components/sync/FundDetailsModal";
 
@@ -30,13 +30,65 @@ type SortKey =
   | "invested"
   | "one_day"
   | "gain_inr"
-  | "gain_pct"
-  | "pct_of_nw"
+  | "pct_of_mf"
+  | "my_avg_nav"
+  | "index_nav"
+  | "vs_index_inr"
   | "nav_date";
 
 type SortState = { key: SortKey; dir: "asc" | "desc" } | null;
 
 const DEFAULT_SORT: SortState = { key: "current", dir: "desc" };
+
+/** NAV formatter — 2dp with Indian grouping (NAVs are small, unlike the
+ *  lakh-scale value columns, so `fmtL`/`fmtINR` would round the cents
+ *  away). Returns an em-dash for null/NaN. */
+function fmtNav(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return "—";
+  return `₹${v.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/** Colour for the entry-timing delta. A ±0.25% dead-band reads as
+ *  neutral "tracking" so tiny noise isn't dressed up as skill. */
+function alphaColorClass(pct: number | null): string {
+  if (pct == null) return "text-muted-foreground";
+  if (pct > 0.25) return "text-[hsl(var(--success))]";
+  if (pct < -0.25) return "text-[hsl(var(--danger))]";
+  return "text-muted-foreground";
+}
+
+/** Entry-timing edge as a % — my amount-weighted NAV vs the fund's
+ *  average NAV over my window. Null when either side is unavailable.
+ *  Shared by the render and the column sorter so both agree. */
+function entryAlphaPct(f: Fund): number | null {
+  const my = f.avg_entry_nav ?? null;
+  const idx = f.period_avg_nav ?? null;
+  return my != null && idx != null && idx > 0 ? ((idx - my) / idx) * 100 : null;
+}
+
+/** Same edge in rupees, across the units actually bought. */
+function entryAlphaInr(f: Fund): number | null {
+  const my = f.avg_entry_nav ?? null;
+  const idx = f.period_avg_nav ?? null;
+  return my != null && idx != null && f.entry_units != null
+    ? (idx - my) * f.entry_units
+    : null;
+}
+
+/** Numeric compare with nulls sunk to the bottom regardless of dir. */
+function cmpNullable(
+  av: number | null,
+  bv: number | null,
+  sign: number
+): number {
+  if (av == null && bv == null) return 0;
+  if (av == null) return 1;
+  if (bv == null) return -1;
+  return sign * (av - bv);
+}
 
 /**
  * Fund holdings table
@@ -49,9 +101,8 @@ const DEFAULT_SORT: SortState = { key: "current", dir: "desc" };
  *      column. Sorting is client-side because the dataset is small
  *      (~10 funds) and it keeps the URL clean.
  *
- *   2. "% of NW" column (C) — quick "how big is this fund vs. my entire
- *      net worth?" scan. Positioned after Current so the two values
- *      read together: "₹6.4 L (10.2% of NW)".
+ *   2. "% of MF" column (C) — quick "how big is this fund within my
+ *      mutual-fund portfolio?" scan.
  *
  *   3. 2026-07-18: Row click now opens FundDetailsModal (the same
  *      modal used by Fetch fund holdings on the Sync page) instead of
@@ -68,10 +119,11 @@ const DEFAULT_SORT: SortState = { key: "current", dir: "desc" };
  */
 export function HoldingsTable({
   funds,
-  totalNw,
+  mfTotal,
 }: {
   funds: Fund[];
-  totalNw: number;
+  /** Total MF value — denominator for the "% of MF" weight column. */
+  mfTotal: number;
   /** Deprecated: modal now fetches its own holdings. Prop kept for
    *  backward-compat with the current page.tsx call site; can be
    *  removed once the page is updated. */
@@ -171,11 +223,12 @@ export function HoldingsTable({
                 onSort={setSort}
               />
               <HeaderCell
-                label="% of NW"
+                label="% of MF"
                 align="right"
-                sortKey="pct_of_nw"
+                sortKey="pct_of_mf"
                 sort={sort}
                 onSort={setSort}
+                title="This fund's share of your total mutual-fund value — its weight within the MF portfolio."
               />
               <HeaderCell
                 label="Invested"
@@ -192,18 +245,35 @@ export function HoldingsTable({
                 onSort={setSort}
               />
               <HeaderCell
-                label="Gain ₹"
+                label="Gain"
                 align="right"
                 sortKey="gain_inr"
                 sort={sort}
                 onSort={setSort}
               />
               <HeaderCell
-                label="Gain %"
+                label="My avg NAV"
                 align="right"
-                sortKey="gain_pct"
+                sortKey="my_avg_nav"
                 sort={sort}
                 onSort={setSort}
+                title="Your amount-weighted average purchase NAV (total invested ÷ units bought) — bigger buys weigh more. Rehearsal/test rows excluded."
+              />
+              <HeaderCell
+                label="Index NAV"
+                align="right"
+                sortKey="index_nav"
+                sort={sort}
+                onSort={setSort}
+                title="The fund's simple-average NAV across every trading day in your buying window (first → last purchase). A weight-neutral benchmark for your entry timing."
+              />
+              <HeaderCell
+                label="vs Index"
+                align="right"
+                sortKey="vs_index_inr"
+                sort={sort}
+                onSort={setSort}
+                title="Your entry-timing edge vs the fund's average price over your buying window — rupees on top, % below. Green = you bought below the average (alpha); red = above (lagging)."
               />
               <HeaderCell
                 label="NAV date"
@@ -220,8 +290,15 @@ export function HoldingsTable({
               const gainPct = f.invested_inr
                 ? (gain / f.invested_inr) * 100
                 : 0;
-              const pctOfNw =
-                totalNw > 0 ? (f.current_value_inr / totalNw) * 100 : 0;
+              const pctOfMf =
+                mfTotal > 0 ? (f.current_value_inr / mfTotal) * 100 : 0;
+              // Entry-price analysis: my amount-weighted cost basis vs the
+              // fund's own average NAV over my buying window. Positive
+              // delta = I bought below the index (alpha).
+              const myNav = f.avg_entry_nav ?? null;
+              const idxNav = f.period_avg_nav ?? null;
+              const alphaPct = entryAlphaPct(f);
+              const alphaInr = entryAlphaInr(f);
               return (
                 <tr
                   key={f.fund_code}
@@ -254,7 +331,7 @@ export function HoldingsTable({
                       {fmtINR(f.current_value_inr)}
                     </td>
                     <td className="px-6 py-3 text-right text-muted-foreground tabular-nums">
-                      {pctOfNw.toFixed(2)}%
+                      {pctOfMf.toFixed(2)}%
                     </td>
                     <td className="px-6 py-3 text-right text-muted-foreground tabular-nums">
                       {fmtINR(f.invested_inr)}
@@ -289,26 +366,71 @@ export function HoldingsTable({
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td
-                      className={cn(
-                        "whitespace-nowrap px-6 py-3 text-right font-medium tabular-nums",
-                        gain >= 0
-                          ? "text-[hsl(var(--success))]"
-                          : "text-[hsl(var(--danger))]"
-                      )}
-                    >
-                      {gain >= 0 ? "+" : ""}
-                      {fmtINR(gain)}
+                    <td className="px-6 py-3 text-right">
+                      <div
+                        className={cn(
+                          "font-medium tabular-nums",
+                          gain >= 0
+                            ? "text-[hsl(var(--success))]"
+                            : "text-[hsl(var(--danger))]"
+                        )}
+                      >
+                        <div className="whitespace-nowrap">
+                          {gain >= 0 ? "+" : ""}
+                          {fmtINR(gain)}
+                        </div>
+                        <div className="mt-0.5 whitespace-nowrap text-[10px] opacity-80">
+                          {fmtPct(gainPct, { sign: true })}
+                        </div>
+                      </div>
                     </td>
                     <td
-                      className={cn(
-                        "whitespace-nowrap px-6 py-3 text-right font-medium tabular-nums",
-                        gainPct >= 0
-                          ? "text-[hsl(var(--success))]"
-                          : "text-[hsl(var(--danger))]"
-                      )}
+                      className="px-6 py-3 text-right text-muted-foreground tabular-nums"
+                      title={
+                        myNav != null && f.entry_tx_count
+                          ? `Your amount-weighted cost basis across ${
+                              f.entry_tx_count
+                            } purchase${f.entry_tx_count === 1 ? "" : "s"}`
+                          : undefined
+                      }
                     >
-                      {fmtPct(gainPct, { sign: true })}
+                      {fmtNav(myNav)}
+                    </td>
+                    <td
+                      className="px-6 py-3 text-right text-muted-foreground tabular-nums"
+                      title={
+                        idxNav != null &&
+                        f.entry_window_start &&
+                        f.entry_window_end
+                          ? `Fund's simple-average NAV over your buying window (${fmtDate(
+                              f.entry_window_start
+                            )} → ${fmtDate(f.entry_window_end)})`
+                          : undefined
+                      }
+                    >
+                      {fmtNav(idxNav)}
+                    </td>
+                    <td className="px-6 py-3 text-right">
+                      {alphaPct != null ? (
+                        <div
+                          className={cn(
+                            "font-medium tabular-nums",
+                            alphaColorClass(alphaPct)
+                          )}
+                        >
+                          <div className="whitespace-nowrap">
+                            {alphaInr != null
+                              ? fmtINR(alphaInr, { sign: true })
+                              : "—"}
+                          </div>
+                          <div className="mt-0.5 whitespace-nowrap text-[10px] opacity-80">
+                            {alphaPct >= 0 ? "+" : ""}
+                            {alphaPct.toFixed(2)}%
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-6 py-3 text-right text-muted-foreground tabular-nums">
                       {fmtDateShort(f.nav_date)}
@@ -344,12 +466,14 @@ function HeaderCell({
   sortKey,
   sort,
   onSort,
+  title,
 }: {
   label: string;
   align: "left" | "right";
   sortKey?: SortKey;
   sort?: SortState;
   onSort?: (next: SortState) => void;
+  title?: string;
 }) {
   const isActive = sort?.key === sortKey && sortKey != null;
   const dir = isActive ? sort?.dir : undefined;
@@ -357,6 +481,7 @@ function HeaderCell({
   if (!sortKey) {
     return (
       <th
+        title={title}
         className={cn(
           "kicker px-6 py-3",
           align === "right" ? "text-right" : "text-left"
@@ -369,6 +494,7 @@ function HeaderCell({
 
   return (
     <th
+      title={title}
       className={cn(
         "kicker px-6 py-3",
         align === "right" ? "text-right" : "text-left"
@@ -438,20 +564,19 @@ function cmp(
       const bg = b.current_value_inr - b.invested_inr;
       return sign * (ag - bg);
     }
-    case "gain_pct": {
-      const ap = a.invested_inr
-        ? (a.current_value_inr - a.invested_inr) / a.invested_inr
-        : 0;
-      const bp = b.invested_inr
-        ? (b.current_value_inr - b.invested_inr) / b.invested_inr
-        : 0;
-      return sign * (ap - bp);
-    }
-    case "pct_of_nw":
-      // pct_of_nw is monotonic with current_value_inr since the
-      // denominator (totalNw) is the same for every row. Sort by
-      // current_value_inr — same order, saves the division.
+    case "pct_of_mf":
+      // Same monotonicity trick: mfTotal is constant across rows.
       return sign * (a.current_value_inr - b.current_value_inr);
+    case "my_avg_nav":
+      return cmpNullable(a.avg_entry_nav ?? null, b.avg_entry_nav ?? null, sign);
+    case "index_nav":
+      return cmpNullable(
+        a.period_avg_nav ?? null,
+        b.period_avg_nav ?? null,
+        sign
+      );
+    case "vs_index_inr":
+      return cmpNullable(entryAlphaInr(a), entryAlphaInr(b), sign);
     case "nav_date": {
       const ad = a.nav_date;
       const bd = b.nav_date;
@@ -474,11 +599,15 @@ function labelFor(key: SortKey): string {
     case "one_day":
       return "1D change";
     case "gain_inr":
-      return "gain ₹";
-    case "gain_pct":
-      return "gain %";
-    case "pct_of_nw":
-      return "% of NW";
+      return "gain";
+    case "pct_of_mf":
+      return "% of MF";
+    case "my_avg_nav":
+      return "my avg NAV";
+    case "index_nav":
+      return "index NAV";
+    case "vs_index_inr":
+      return "vs Index";
     case "nav_date":
       return "NAV date";
   }

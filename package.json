@@ -4,11 +4,12 @@
   "private": true,
   "description": "Personal portfolio dashboard — Next.js 15, wired to Supabase",
   "scripts": {
-    "dev": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 next dev -p 5000",
-    "build": "next build",
-    "start": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 next start -p 5000",
+    "dev": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 NEXT_DIST_DIR=.next-dev next dev -p 5000",
+    "build": "cross-env NEXT_DIST_DIR=.next-build next build",
+    "verify:pwa-local": "cross-env NEXT_DIST_DIR=.next-build node scripts/verify-pwa-local.mjs",
+    "start": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 NEXT_DIST_DIR=.next-build next start -p 5000",
     "lint": "next lint",
-    "zip": "rm -f vayu-dashboard.zip && zip -rq vayu-dashboard.zip . -x 'node_modules/*' '.next/*' '.git/*' '.DS_Store' 'tsconfig.tsbuildinfo' '.env.local' '.env' 'vayu-dashboard.zip' && ls -lh vayu-dashboard.zip"
+    "zip": "rm -f vayu-dashboard.zip && zip -rq vayu-dashboard.zip . -x 'node_modules/*' '.next/*' '.next-dev/*' '.next-build/*' '.git/*' '.DS_Store' 'tsconfig.tsbuildinfo' '.env.local' '.env' 'vayu-dashboard.zip' && ls -lh vayu-dashboard.zip"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.109.0",

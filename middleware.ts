@@ -191,6 +191,16 @@ function rateLimitLoginPost(req: NextRequest): NextResponse | null {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  // Never mutate request headers for Next internals/static assets.
+  // Passing custom request headers via NextResponse.next({ request })
+  // is useful for app routes (we forward x-pathname for RootLayout),
+  // but it can break static chunk resolution when applied to /_next/*.
+  // Hard-bypass those paths so JS/CSS/assets are served by Next's
+  // internal static handler unchanged.
+  if (pathname.startsWith("/_next/") || pathname === "/favicon.ico") {
+    return NextResponse.next();
+  }
+
   // Forward the pathname to the app via a request header so the root
   // layout can render conditionally per-route without needing to move
   // every page into a route group. `headers()` in Server Components
@@ -271,5 +281,7 @@ export async function middleware(req: NextRequest) {
  * quotas or trigger DB writes.
  */
 export const config = {
+  // Keep middleware off Next internals/static assets entirely.
+  // (We still have a defensive runtime bypass at the top of middleware.)
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

@@ -13,6 +13,12 @@ Requested 2026-07-23, following the NPS XIRR build (`lib/xirr.ts` +
 `computeNpsXirr` in `lib/queries.ts`, badge on `NpsGrowthBreakdown`).
 Three related asks, do them together since they share data:
 
+> **STATUS (2026-07-31):** items 2 + 3 SHIPPED as the "My avg NAV /
+> Index NAV / vs Index" columns on the Portfolio Fund-holdings table
+> (`attachEntryPriceAnalysis` in `lib/queries.ts` +
+> `components/portfolio/HoldingsTable.tsx`). Item 1 (MF XIRR) is still
+> open.
+
 ### 1. MF XIRR — per fund AND total MF portfolio
 
 Same `computeXirr()` solver in `lib/xirr.ts` — no new math needed, just a
@@ -49,7 +55,7 @@ computable (per computeXirr's contract), same as NPS — but if there's
 ever a "how good is this fund" framing in copy, don't imply a <3yr number
 is decision-grade.
 
-### 2. My average entry NAV (per fund)
+### 2. My average entry NAV (per fund) — DONE 2026-07-31
 
 Cost basis per unit, computed from MY OWN transactions:
 
@@ -73,7 +79,7 @@ Exclude `redemption` from the numerator/denominator of the *entry* price
 unless there's a reason to track "average exit NAV" too, which wasn't
 asked for here but is the natural symmetric extension if it comes up.
 
-### 3. How close is my average entry NAV to the fund's own average NAV over the same period?
+### 3. How close is my average entry NAV to the fund's own average NAV over the same period? — DONE 2026-07-31
 
 This is the one that actually *measures* whether the "flood with 280
 entries/year" SIP strategy discussed in this session's conversation
@@ -122,3 +128,61 @@ needed to start this, same as items 1 and 2.
   `NpsGrowthBreakdown`'s header change from 2026-07-23).
 - Per-fund modal (TBD which one) — avgEntryNav / fundAvgNav / delta stat
   block.
+
+---
+
+## Studio: content-creation enhancements (deferred)
+
+Raised 2026-07-30. Two ideas were discussed but explicitly parked for
+later — no code shipped for either yet.
+
+### 2. Cinema calibration timer / slow-motion toggle
+
+**Problem it solves:** the reveal waterfall runs on a 4s budget
+(`STUDIO_TIMING` in `components/studio/RevealDashboard.tsx`). Screen
+recorders capture it fine at 60fps, but there's no *editing* headroom:
+you can't cleanly slow a fast clip in post (frame interpolation ghosts),
+and there's no breathing room for a voiceover walking through the chart
+draw / roll-up / verdict beats. Slowing the source is the fix.
+
+**Shape of the feature:** a global speed multiplier (e.g. 1x / 0.5x /
+0.25x) that scales the whole ceremony in lockstep so audio + visuals stay
+sample-aligned:
+- Multiply every `STUDIO_TIMING` value (or wrap reads in a
+  `scale(ms)` helper) — `CHART_DURATION`, `PILL_*`, `STATS_*`,
+  `ROLLUP_SOUND_BEGIN`, `TOTAL_ORDERS_SETTLE`, `VERDICT_BEGIN`. These
+  already flow to children via props, so one dial should cascade.
+- Lottie: call `setSpeed()` in `components/studio/CelebrationOverlay.tsx`
+  with the same multiplier (it currently derives `LOTTIE_SPEED` from a
+  fixed target duration — factor the multiplier in there).
+- Audio: the synths in `lib/studio/sounds.ts` are scheduled against the
+  same clock; verify the rollup/ding/verdict still line up when slowed
+  (they may need their own scheduled offsets scaled, not just the visual
+  timings). This is the fiddly part — the audio is tuned to land on
+  specific tile-settle frames.
+- Surface the control via a `?speed=0.5` URL param so it's scriptable
+  and doesn't add on-camera chrome.
+
+**Gotcha:** `prefers-reduced-motion` users already get the static Skip
+path via `RollUpNumber` — the slow-mo dial should only affect the
+animated (Submit / Replay) path.
+
+### 4. Same-frame theme switching (hotkeys + mobile gesture)
+
+**Problem it solves:** to record a seamless "theme morph" cut, the
+creator needs to swap Classic → Clay → Glass → Soft → Skeuo without
+navigating an on-screen menu (which breaks the shot).
+
+**Shape of the feature:**
+- Desktop / device-mode capture: bind number keys `1–5` to the
+  `STUDIO_THEMES` entries in `lib/studio/themes.ts` and `R` to reset the
+  reveal from t=0 (bump the `replayCount` remount key in
+  `RevealDashboard.tsx`). Keydown listener on `window`, scoped to
+  `/studio*`, ignored when an input/select is focused.
+- Physical mobile (no keyboard): a discreet gesture, e.g. triple-tap the
+  "Studio" title (or a 2-finger tap anywhere) cycles to the next theme.
+  Keep it invisible so it never shows in a recording — this is the
+  mobile-first counterpart to the hotkeys since the Studio screen is
+  primarily a phone surface.
+- Navigation currently uses `<Link>` (route change per theme). Hotkey /
+  gesture handlers can `router.push()` the next theme's href instead.

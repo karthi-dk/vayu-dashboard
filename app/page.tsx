@@ -7,8 +7,10 @@ import { NWTrendChart } from "@/components/overview/NWTrendChart";
 import { NWCompositionChart } from "@/components/overview/NWCompositionChart";
 import { MFGrowthBreakdown } from "@/components/overview/MFGrowthBreakdown";
 import { NpsGrowthBreakdown } from "@/components/overview/NpsGrowthBreakdown";
+import { EpfGrowthBreakdown } from "@/components/overview/EpfGrowthBreakdown";
 import { IndexHighsCard } from "@/components/overview/IndexHighsCard";
 import { getOverviewData } from "@/lib/queries";
+import { withTransientRetry } from "@/lib/transientRetry";
 import { fmtDateShort, fmtL } from "@/lib/utils";
 
 // Force fresh reads on every visit — this is a personal dashboard, no caching
@@ -16,12 +18,27 @@ import { fmtDateShort, fmtL } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
+  let overview;
+  try {
+    // Retry the transient post-sleep clock-skew handshake (PGRST303
+    // "JWT issued at future") so a browser reload after idle hours doesn't
+    // hard-fail the landing page on the first request before NTP re-syncs.
+    overview = await withTransientRetry(() => getOverviewData());
+  } catch (err) {
+    // Keep the throw so the route-level error UI still renders, but log
+    // full details server-side (Vercel logs) for production diagnosis.
+    console.error("[overview] getOverviewData failed", err);
+    throw err;
+  }
+
   const {
     latest,
     prev,
     history,
     mfHistory,
     npsHistory,
+    epfHistory,
+    nwHistory,
     npsXirr,
     nps,
     epf,
@@ -32,7 +49,7 @@ export default async function OverviewPage() {
     credits,
     wealthComposition,
     indexLevels,
-  } = await getOverviewData();
+  } = overview;
 
   const total = latest?.total_nw ?? 0;
 
@@ -47,11 +64,10 @@ export default async function OverviewPage() {
   // backfill historical data via scripts/backfill-nps-nav-history.ts
   // and the CAS ingest.
   //
-  // EPF has no transaction-level reconstruction (no per-contribution
-  // ledger), so it uses the full nw_daily range — best we have. That
-  // means EPF's sparkline covers a shorter window (since tracking
-  // start) while MF/NPS cover their entire tracked lifespan. Each
-  // sparkline honestly reflects the data available for that asset.
+  // EPF now has a passbook-based reconstruction too (lib/epf/epfHistory
+  // — monthly contributions + annual interest across all member IDs,
+  // pension excluded), so its sparkline reaches back to the first
+  // contribution like MF/NPS rather than only the nw_daily window.
   //
   // Falls back to nw_daily's last 30 rows on fresh installs where
   // the reconstruction hasn't populated the historical series yet.
@@ -62,7 +78,10 @@ export default async function OverviewPage() {
     ? npsHistory
     : history.slice(-30)
   ).map((r) => ({ v: r.nps_value }));
-  const epfSpark = history.map((r) => ({ v: r.epf_estimate }));
+  const epfSpark =
+    epfHistory.length > 0
+      ? epfHistory.map((r) => ({ v: r.epf_value }))
+      : history.slice(-30).map((r) => ({ v: r.epf_estimate }));
 
   // 1D chip strategy per card
   // -------------------------
@@ -171,9 +190,26 @@ export default async function OverviewPage() {
       : null;
   const npsInvested = latestNpsLedger?.nps_invested ?? null;
 
+  // Keep the MF headline card consistent with the MF Growth breakdown
+  // chart: prefer ledger-derived net deposits (purchases - redemptions)
+  // as the denominator/base when available, else fall back to the
+  // legacy invested snapshot fields.
+  const mfReferenceBase =
+    latest?.mf_deposits_ledger != null && latest.mf_deposits_ledger > 0
+      ? latest.mf_deposits_ledger
+      : latest?.mf_invested ?? null;
+  const mfReferenceLabel =
+    latest?.mf_deposits_ledger != null && latest.mf_deposits_ledger > 0
+      ? "net deposits"
+      : "invested";
+  const mfGainPct =
+    latest && mfReferenceBase != null && mfReferenceBase > 0
+      ? ((latest.mf_value - mfReferenceBase) / mfReferenceBase) * 100
+      : latest?.mf_gain_pct ?? 0;
+
   return (
     <div className="flex flex-col gap-8">
-      <HeadlineNW latest={latest} prev={prev} deltas={nwDeltas} />
+      <HeadlineNW latest={latest} prev={prev} deltas={nwDeltas} credits={credits} />
 
       {latest ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -183,10 +219,17 @@ export default async function OverviewPage() {
             value={latest.mf_value}
             subline={
               <>
-                <span className="text-[hsl(var(--success))]">
-                  +{(latest.mf_gain_pct ?? 0).toFixed(2)}%
+                <span
+                  className={
+                    mfGainPct >= 0
+                      ? "text-[hsl(var(--success))]"
+                      : "text-[hsl(var(--danger))]"
+                  }
+                >
+                  {mfGainPct >= 0 ? "+" : ""}
+                  {mfGainPct.toFixed(2)}%
                 </span>{" "}
-                vs invested {fmtL(latest.mf_invested)}
+                vs {mfReferenceLabel} {fmtL(mfReferenceBase ?? 0)}
               </>
             }
             pctOfNw={total > 0 ? (latest.mf_value / total) * 100 : 0}
@@ -284,7 +327,7 @@ export default async function OverviewPage() {
           because it's the natural "how has this mix evolved?" follow-up
           to their point-in-time snapshots — before the Asset Allocation
           card, which reframes the same mix as Equity vs Debt. */}
-      <NWCompositionChart history={history} />
+      <NWCompositionChart history={nwHistory} />
 
       {latest && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -301,9 +344,10 @@ export default async function OverviewPage() {
           keeps them visually grouped as a single analytical unit. */}
       {latest && <WealthCompositionCard composition={wealthComposition} />}
 
-      <NWTrendChart history={history} credits={credits} />
+      <NWTrendChart history={nwHistory} />
       <MFGrowthBreakdown history={mfHistory} />
       <NpsGrowthBreakdown history={npsHistory} xirr={npsXirr} />
+      <EpfGrowthBreakdown history={epfHistory} />
 
       {/* Market-wide reference, not portfolio-derived — deliberately last,
           after every personal-holdings section. Small "how far off the

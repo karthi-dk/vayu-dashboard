@@ -42,18 +42,61 @@ import { createClient } from "@supabase/supabase-js";
  * loudly at import time.
  */
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceKey = process.env.SUPABASE_SERVICE_KEY;
+const rawServiceKey = process.env.SUPABASE_SERVICE_KEY;
+
+function normalizeEnvSecret(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+/**
+ * Guardrail for a common deployment mistake: wiring the anon key into
+ * SUPABASE_SERVICE_KEY. When the key is JWT-shaped we can inspect its
+ * payload role and fail fast with a clear message instead of surfacing
+ * opaque RLS permission errors from random queries.
+ */
+function inferSupabaseJwtRole(key: string): string | null {
+  const parts = key.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payloadB64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padLen = (4 - (payloadB64.length % 4)) % 4;
+    const padded = payloadB64 + "=".repeat(padLen);
+    const json = Buffer.from(padded, "base64").toString("utf8");
+    const parsed = JSON.parse(json) as { role?: unknown };
+    return typeof parsed.role === "string" ? parsed.role : null;
+  } catch {
+    return null;
+  }
+}
 
 if (!url) {
   throw new Error(
     "Missing NEXT_PUBLIC_SUPABASE_URL. Copy .env.example to .env.local and set it."
   );
 }
-if (!serviceKey) {
+if (!rawServiceKey) {
   throw new Error(
     "Missing SUPABASE_SERVICE_KEY. This is the service_role secret from " +
       "Supabase Dashboard → Settings → API. Do NOT prefix with NEXT_PUBLIC_ " +
       "— that would leak the key to browsers."
+  );
+}
+
+const serviceKey = normalizeEnvSecret(rawServiceKey);
+
+const inferredRole = inferSupabaseJwtRole(serviceKey);
+if (inferredRole && inferredRole !== "service_role") {
+  throw new Error(
+    `SUPABASE_SERVICE_KEY appears to be a JWT key with role=${inferredRole}, not service_role. ` +
+      "If local works but production fails, the production environment variable is different (or scoped differently) even if names match. " +
+      "In Vercel, set SUPABASE_SERVICE_KEY in the Production environment specifically and redeploy."
   );
 }
 

@@ -6,6 +6,7 @@ import type { StudioData } from "@/app/studio/data";
 import { STUDIO_TIMING } from "@/components/studio/RevealDashboard";
 import { RollUpNumber } from "@/components/studio/RollUpNumber";
 import { VerdictReactive } from "@/components/studio/VerdictReactive";
+import type { StudioTelemetryTheme } from "@/lib/studio/recordingTelemetry";
 import { resolveVerdictTier, type VerdictTier } from "@/lib/studio/sounds";
 import { cn, fmtCompactINR } from "@/lib/utils";
 
@@ -23,8 +24,8 @@ import { cn, fmtCompactINR } from "@/lib/utils";
  *   0. 1 DAY                — today's NAV-only ₹ movement (Σ per-fund
  *                             one_day_change_inr). Deposit-immune
  *                             after the 2026-07-27 recomputeNwDaily
- *                             fix. Tone-coloured. Sub reserved
- *                             (nbsp) — label is self-descriptive.
+ *                             fix. Tone-coloured. Sub shows the
+ *                             matching 1D percentage (+/-X.XX%).
  *   1. TOTAL INVESTED       — lifetime money-in (fund_holdings sum).
  *                             Sub reserved (nbsp) — same reason.
  *   2. AVG DAILY EARNING    — unrealised gain ÷ days invested. Reframes
@@ -210,9 +211,13 @@ import { cn, fmtCompactINR } from "@/lib/utils";
 export function StatsRow({
   stats,
   shouldAnimate = false,
+  telemetryRunId,
+  telemetryTheme = "unknown",
 }: {
   stats: StudioData["stats"];
   shouldAnimate?: boolean;
+  telemetryRunId?: string;
+  telemetryTheme?: StudioTelemetryTheme;
 }) {
   const {
     invested,
@@ -233,6 +238,24 @@ export function StatsRow({
       : oneDayInr > 0
         ? "gain"
         : "loss";
+  const oneDayPctSub: ReactNode | undefined =
+    oneDayPct != null
+      ? (() => {
+          const pct = Math.abs(oneDayPct) < 0.005 ? 0 : oneDayPct;
+          return (
+            <span
+              className={cn(
+                "font-medium tabular-nums",
+                pct > 0 && "text-[hsl(var(--success))]",
+                pct < 0 && "text-[hsl(var(--danger))]",
+                pct === 0 && "text-muted-foreground/80"
+              )}
+            >
+              {`${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`}
+            </span>
+          );
+        })()
+      : undefined;
   // Verdict tier drives the 1D-tile reactive animation. Same
   // resolver the audio verdict uses (lib/studio/sounds.ts), so
   // sight and sound are guaranteed to agree on the tier.
@@ -254,6 +277,14 @@ export function StatsRow({
         : "loss";
   const cellDelay = (i: number) =>
     STUDIO_TIMING.STATS_BASE + i * STUDIO_TIMING.STATS_STAGGER;
+  const rollupTelemetry = (metric: string) =>
+    telemetryRunId
+      ? {
+          runId: telemetryRunId,
+          theme: telemetryTheme,
+          metric,
+        }
+      : undefined;
 
   // Sub for the combined TOTAL ORDERS tile: "N this month / ₹X".
   // The hero (totalOrders) matches the tile label unambiguously,
@@ -305,11 +336,13 @@ export function StatsRow({
                     animate={shouldAnimate}
                     delay={cellDelay(0)}
                     duration={STUDIO_TIMING.STATS_ROLLUP}
+                    telemetry={rollupTelemetry("stats.oneDayInr")}
                   />
                 ) : (
                   "—"
                 )
               }
+              sub={oneDayPctSub}
             />
           </VerdictReactive>
         </MotionCell>
@@ -325,6 +358,7 @@ export function StatsRow({
                   animate={shouldAnimate}
                   delay={cellDelay(1)}
                   duration={STUDIO_TIMING.STATS_ROLLUP}
+                  telemetry={rollupTelemetry("stats.invested")}
                 />
               ) : (
                 "—"
@@ -351,6 +385,7 @@ export function StatsRow({
                   animate={shouldAnimate}
                   delay={cellDelay(2)}
                   duration={STUDIO_TIMING.STATS_ROLLUP}
+                  telemetry={rollupTelemetry("stats.dailyEarningRate")}
                 />
               ) : (
                 "—"
@@ -383,6 +418,7 @@ export function StatsRow({
                   animate={shouldAnimate}
                   delay={cellDelay(3)}
                   duration={STUDIO_TIMING.STATS_ROLLUP}
+                  telemetry={rollupTelemetry("stats.avgOrderSize")}
                 />
               ) : (
                 "—"
@@ -411,6 +447,7 @@ export function StatsRow({
                   animate={shouldAnimate}
                   delay={cellDelay(4)}
                   duration={STUDIO_TIMING.STATS_ROLLUP}
+                  telemetry={rollupTelemetry("stats.profitPerOrder")}
                 />
               ) : (
                 "—"
@@ -442,6 +479,7 @@ export function StatsRow({
                 animate={shouldAnimate}
                 delay={cellDelay(5)}
                 duration={STUDIO_TIMING.STATS_ROLLUP}
+                telemetry={rollupTelemetry("stats.totalOrders")}
               />
             }
             // Sub stays static — the hero count rolls, the MTD
@@ -481,11 +519,13 @@ function MotionCell({
 }) {
   return (
     <motion.div
-      initial={animate ? { opacity: 0, y: 8 } : false}
-      animate={{ opacity: 1, y: 0 }}
+      initial={
+        animate ? { opacity: 0, y: 10, scale: 0.985, filter: "blur(3px)" } : false
+      }
+      animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
       transition={{
         delay: animate ? delayMs / 1000 : 0,
-        duration: 0.4,
+        duration: 0.45,
         ease: [0.16, 1, 0.3, 1],
       }}
     >

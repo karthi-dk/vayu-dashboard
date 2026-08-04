@@ -10,6 +10,7 @@ import { RefreshIndexLevelsCard } from "@/components/sync/RefreshIndexLevelsCard
 import { DeleteStudioTestDataCard } from "@/components/sync/DeleteStudioTestDataCard";
 import { TimeAgo } from "@/components/ui/TimeAgo";
 import { getSyncData } from "@/lib/queries";
+import { withTransientRetry } from "@/lib/transientRetry";
 import { sbServer } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +27,7 @@ export default async function SyncPage() {
     epfState,
     npsState,
     indexLevels,
-  } = await getSyncData();
+  } = await withTransientRetry(() => getSyncData());
 
   const testCountRes = await sbServer
     .from("mf_transactions")

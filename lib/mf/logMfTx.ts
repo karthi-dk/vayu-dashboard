@@ -166,6 +166,76 @@ export type NavLookupResult =
     }
   | { ok: false; error: string };
 
+const MFAPI_TIMEOUT_MS = 10_000;
+const MFAPI_MAX_RETRIES = 2; // total attempts = retries + 1
+const MFAPI_RETRY_BACKOFF_MS = 200;
+
+function isTransientMfapiFetchError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  if (
+    msg.includes("fetch failed") ||
+    msg.includes("connection reset") ||
+    msg.includes("econnreset") ||
+    msg.includes("epipe") ||
+    msg.includes("etimedout") ||
+    msg.includes("und_err_socket") ||
+    msg.includes("timeout") ||
+    msg.includes("network")
+  ) {
+    return true;
+  }
+  const cause = (err as Error & { cause?: unknown }).cause;
+  if (cause && typeof cause === "object" && "code" in cause) {
+    const code = String((cause as { code?: unknown }).code ?? "");
+    if (
+      code === "ECONNRESET" ||
+      code === "ETIMEDOUT" ||
+      code === "UND_ERR_SOCKET" ||
+      code === "UND_ERR_CONNECT_TIMEOUT" ||
+      code === "EPIPE" ||
+      code === "ENOTFOUND"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchMfapiHistory(schemeCode: string): Promise<Response> {
+  const url = `https://api.mfapi.in/mf/${schemeCode}`;
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt <= MFAPI_MAX_RETRIES; attempt++) {
+    try {
+      const resp = await fetch(url, {
+        headers: { "User-Agent": "vayu-dashboard/1.0" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(MFAPI_TIMEOUT_MS),
+      });
+      if (!resp.ok) {
+        return resp;
+      }
+      return resp;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < MFAPI_MAX_RETRIES && isTransientMfapiFetchError(err)) {
+        await sleep(MFAPI_RETRY_BACKOFF_MS * Math.pow(2, attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error(typeof lastErr === "string" ? lastErr : "unknown mfapi error");
+}
+
 /**
  * Fetch the NAV that would have been applied to a purchase on
  * `targetDate`. Uses mfapi.in's full-history endpoint and walks back
@@ -180,18 +250,13 @@ export async function fetchNavForDate(
   schemeCode: string,
   targetDate: string
 ): Promise<NavLookupResult> {
-  const url = `https://api.mfapi.in/mf/${schemeCode}`;
   let resp: Response;
   try {
-    resp = await fetch(url, {
-      headers: { "User-Agent": "vayu-dashboard/1.0" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
+    resp = await fetchMfapiHistory(schemeCode);
   } catch (err) {
     return {
       ok: false,
-      error: `mfapi.in fetch failed: ${
+      error: `mfapi.in fetch failed after ${MFAPI_MAX_RETRIES + 1} attempts: ${
         err instanceof Error ? err.message : String(err)
       }`,
     };

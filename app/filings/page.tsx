@@ -1,4 +1,5 @@
 import { getFilingsData } from "@/lib/filings";
+import { withTransientRetry } from "@/lib/transientRetry";
 import { FilingsHeadline } from "@/components/filings/FilingsHeadline";
 import { FilingsTable } from "@/components/filings/FilingsTable";
 import { TaxRateChart } from "@/components/filings/TaxRateChart";
@@ -28,7 +29,9 @@ export const dynamic = "force-dynamic";
  * getOverviewData for nps_transactions / retirement_credits.
  */
 export default async function FilingsPage() {
-  const { returns, cumulative, tableStale } = await getFilingsData();
+  const { returns, cumulative, tableStale } = await withTransientRetry(() =>
+    getFilingsData()
+  );
 
   return (
     <div className="flex flex-col gap-8">

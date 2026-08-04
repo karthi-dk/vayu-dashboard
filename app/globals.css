@@ -300,6 +300,13 @@
     4px 4px 8px #a3b1c6;
 }
 
+/* Keep the 1 DAY verdict halo ring's corner radius aligned with
+ * the theme's card-shell radius. Without this, the halo can look
+ * sharper than the underlying tile on themed Studio pages. */
+.studio-neumorphic-scope .studio-verdict-ring {
+  border-radius: 1rem;
+}
+
 /* ─────────────────────────────────────────────────────────────
  * /studio/glassmorphic PROTOTYPE THEME
  *
@@ -373,6 +380,11 @@
   -webkit-backdrop-filter: blur(12px);
   border-color: rgba(255, 255, 255, 0.15) !important;
   border-radius: 999px;
+}
+
+/* Match verdict halo corner radius to glass card shells. */
+.studio-glassmorphic-scope .studio-verdict-ring {
+  border-radius: 1rem;
 }
 
 /* Native form control tuning — pushes the OS-rendered scrollbars
@@ -687,4 +699,122 @@
     0 4px 8px -2px rgba(60, 60, 100, 0.10),
     inset 0 3px 5px -1px rgba(255, 255, 255, 1),
     inset 0 -3px 6px -2px rgba(60, 60, 100, 0.06);
+}
+
+/* Clay cards are rounder than base Studio; keep halo in sync. */
+.studio-claymorphic-scope .studio-verdict-ring {
+  border-radius: 1.5rem;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * /studio/skeuomorphic PROTOTYPE THEME
+ *
+ * Tactile "physical object" variant for Studio only: warm paper
+ * backdrop, raised card surfaces, subtle emboss/deboss cues, and
+ * stronger material-like borders than the other morphic themes.
+ *
+ * Safe to remove if the direction is rejected.
+ * ─────────────────────────────────────────────────────────── */
+.studio-skeuomorphic-scope {
+  --background: 38 36% 89%;         /* parchment base */
+  --foreground: 24 28% 22%;         /* warm ink */
+  --card: 40 42% 94%;               /* paper card */
+  --card-foreground: 24 28% 22%;
+  --muted: 38 28% 83%;
+  --muted-foreground: 24 18% 38%;
+  --border: 34 30% 62%;
+  --primary: 26 54% 38%;            /* leather brown accent */
+  --primary-foreground: 45 55% 96%;
+  --success: 138 40% 33%;
+  --warning: 35 72% 42%;
+  --danger: 6 60% 45%;
+
+  color-scheme: light;
+  color: hsl(var(--foreground));
+  background:
+    radial-gradient(circle at 12% 8%, rgba(255, 255, 255, 0.45), transparent 38%),
+    radial-gradient(circle at 88% 14%, rgba(147, 113, 66, 0.10), transparent 42%),
+    linear-gradient(180deg, #efe5d4 0%, #e4d6bf 100%);
+}
+
+/* Shared reveal-stage cards and chips: raised parchment tiles. */
+.studio-skeuomorphic-scope
+  [class*="bg-background"][class*="border-border"] {
+  background: linear-gradient(180deg, #f6efdf 0%, #eadcc2 100%) !important;
+  border-color: #bda47f !important;
+  box-shadow:
+    0 14px 22px -12px rgba(72, 48, 24, 0.35),
+    0 3px 6px -2px rgba(72, 48, 24, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    inset 0 -1px 0 rgba(120, 86, 45, 0.25);
+  border-radius: 0.95rem;
+}
+
+/* Timeframe switch tray gets a carved-in groove. */
+.studio-skeuomorphic-scope
+  .rounded-md.border.border-border.p-0\.5 {
+  background: linear-gradient(180deg, #d8c6a8 0%, #cab48f 100%) !important;
+  border-color: #ad8f66 !important;
+  box-shadow:
+    inset 0 3px 5px rgba(107, 77, 42, 0.30),
+    inset 0 -1px 0 rgba(255, 244, 224, 0.55);
+  border-radius: 999px;
+}
+
+/* Header controls and small utility buttons as raised material buttons. */
+.studio-skeuomorphic-scope .h-8.rounded-md.border,
+.studio-skeuomorphic-scope button.rounded-md.border {
+  background: linear-gradient(180deg, #f3e8d2 0%, #e3d2b2 100%) !important;
+  border-color: #af9166 !important;
+  color: #4b371e !important;
+  box-shadow:
+    0 4px 8px rgba(81, 56, 29, 0.20),
+    inset 0 1px 0 rgba(255, 255, 255, 0.70);
+}
+
+/* Inputs/selects look like inset fields on a paper form. */
+.studio-skeuomorphic-scope select,
+.studio-skeuomorphic-scope input[type="date"],
+.studio-skeuomorphic-scope input[type="number"],
+.studio-skeuomorphic-scope input[type="text"] {
+  background: linear-gradient(180deg, #fdf8ee 0%, #f4e8d4 100%) !important;
+  border-color: #b29871 !important;
+  color: #3f2e1a !important;
+  box-shadow:
+    inset 0 2px 4px rgba(95, 66, 35, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.studio-skeuomorphic-scope input::placeholder {
+  color: rgba(79, 57, 33, 0.55) !important;
+}
+
+/* Primary CTA keeps high contrast while staying in-material. */
+.studio-skeuomorphic-scope button.w-full.rounded-md {
+  background: linear-gradient(180deg, #8a6332 0%, #6e4c24 100%) !important;
+  border: 1px solid #5f3f1d !important;
+  color: #fff7e8 !important;
+  box-shadow:
+    0 10px 16px -8px rgba(74, 48, 19, 0.55),
+    inset 0 1px 0 rgba(255, 233, 197, 0.32);
+}
+
+/* Back-to-entry floating chip in reveal stage. */
+.studio-skeuomorphic-scope .rounded-full[aria-label*="Back" i],
+.studio-skeuomorphic-scope .rounded-full[aria-label*="entry" i] {
+  background: linear-gradient(180deg, #f4e8d2 0%, #dfc9a3 100%) !important;
+  border-color: #a9875f !important;
+  color: #4b371e !important;
+  box-shadow:
+    0 6px 10px rgba(70, 47, 23, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.70);
+}
+
+.studio-skeuomorphic-scope .studio-verdict-ring {
+  border-radius: 0.95rem;
+}
+
+.studio-skeuomorphic-scope ::selection {
+  background: rgba(142, 99, 50, 0.28);
+  color: #2f2315;
 }

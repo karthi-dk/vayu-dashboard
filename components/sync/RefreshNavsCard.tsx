@@ -498,13 +498,37 @@ function MfPanel({
             {mf.nav_source && <MfSourceTag source={mf.nav_source} />}
             {mf.stale_fund_count > 0 && (
               <span
-                className="rounded bg-[hsl(var(--warning)/0.15)] px-1.5 py-0.5 text-[9px] font-medium text-[hsl(var(--warning))]"
+                className="inline-flex items-center gap-1 rounded bg-[hsl(var(--warning)/0.15)] px-1.5 py-0.5 text-[9px] font-medium text-[hsl(var(--warning))]"
                 title={`${mf.stale_fund_count} fund(s) have older NAV dates than the batch headline — usually FoF or international funds that publish T+2.`}
               >
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-1.5 w-1.5 rounded-full bg-[hsl(var(--warning))]"
+                />
                 {mf.stale_fund_count} stale
               </span>
             )}
           </div>
+
+          {mf.nav_date && (
+            <div className="mt-2 grid grid-cols-1 gap-1.5 text-[10px] leading-snug">
+              <FundListChip
+                tone="success"
+                label={`Fresh (${mf.fresh_funds.length})`}
+                names={mf.fresh_funds.map((f) => f.fund_code)}
+              />
+              {mf.stale_funds.length > 0 && (
+                <FundListChip
+                  tone="warning"
+                  label={`Stale (${mf.stale_funds.length})`}
+                  names={mf.stale_funds.map(
+                    (f) => `${f.fund_code}${f.nav_date ? `(${fmtDateShort(f.nav_date)})` : ""}`
+                  )}
+                />
+              )}
+            </div>
+          )}
+
           {message && (
             <div className="mt-2 text-[10px] text-muted-foreground">{message}</div>
           )}
@@ -514,6 +538,39 @@ function MfPanel({
           No funds yet — paste a Groww JSON to seed.
         </div>
       )}
+    </div>
+  );
+}
+
+function FundListChip({
+  tone,
+  label,
+  names,
+}: {
+  tone: "success" | "warning";
+  label: string;
+  names: string[];
+}) {
+  if (names.length === 0) return null;
+  const classes =
+    tone === "success"
+      ? "border-[hsl(var(--success)/0.34)] bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success))]"
+      : "border-[hsl(var(--warning)/0.42)] bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning))]";
+
+  return (
+    <div className={`rounded-md border px-2 py-1 ${classes}`}>
+      <span className="font-semibold">
+        <span
+          aria-hidden="true"
+          className={
+            tone === "success"
+              ? "mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))] align-middle"
+              : "mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[hsl(var(--warning))] align-middle"
+          }
+        />
+        {label}:
+      </span>{" "}
+      <span className="font-medium">{names.join(", ")}</span>
     </div>
   );
 }

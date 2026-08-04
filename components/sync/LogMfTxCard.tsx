@@ -332,11 +332,10 @@ export function LogMfTxCard() {
         // Order matters SLIGHTLY: NAV-date resolution changes txDate
         // for a subset of rows, and the weak-key duplicate check keys
         // on txDate. Running the checks in parallel means the weak-key
-        // check MAY use the pre-resolution date — that's fine because
-        // the strong-key check (source_ref/TxnID) is deterministic and
-        // wins over the weak-key one, and the weak-key check only
-        // fires when there's no TxnID at all (essentially never for
-        // INDmoney bulk-list rows, which all carry TxnID).
+        // check MAY use the pre-resolution date — acceptable because
+        // strong-key matches (source_ref/TxnID) are deterministic and
+        // always preferred, while weak matches are advisory-only
+        // warnings now (they no longer auto-uncheck a row).
         void runNavDateResolution(rows);
         void runExistingCheck(rows);
       }
@@ -368,6 +367,9 @@ export function LogMfTxCard() {
       if (parsed.gross_amount != null) {
         next.amount_inr = parsed.gross_amount.toString();
       }
+      // When INDmoney detail payload includes the exact NAV, use it as
+      // an explicit override so submit doesn't depend on mfapi reachability.
+      next.nav_override = parsed.nav != null ? parsed.nav.toString() : "";
       // NAV date wiring — mirrors the manual checkbox's semantics
       // exactly: differs → uncheck + populate the override; same (or
       // unknown) → leave checked, which defaults the server lookup to
@@ -408,11 +410,12 @@ export function LogMfTxCard() {
   /** Pre-flight duplicate check — runs once right after parsing, before
    *  the user can submit. Two lookups fired in parallel:
    *    1) STRONG match by INDmoney TxnID (source_ref) — deterministic.
-   *    2) WEAK match by (fund_code, tx_date, tx_type) — heuristic.
-   *  Strong wins when both hit. Rows with any match auto-uncheck so
-   *  idempotency doesn't hinge on the amount happening to hash-collide
-   *  at submit time. See checkExistingMfTxByRef / checkExistingMfTx in
-   *  app/actions.ts for the full rationale. */
+    *    2) WEAK match by fund/date/type + NAV/amount hints — heuristic.
+    *  Strong wins when both hit. Only STRONG matches auto-uncheck;
+    *  weak matches stay selected and render a warning so legitimate
+    *  same-day second trades can still be logged. See
+    *  checkExistingMfTxByRef / checkExistingMfTx in app/actions.ts for
+    *  the full rationale. */
   async function runExistingCheck(initialRows: BulkRow[]) {
     const successful = initialRows.filter(
       (r) => r.item.outcome === "successful" && r.fundCode
@@ -429,9 +432,12 @@ export function LogMfTxCard() {
       strongPromise,
       checkExistingMfTx(
         successful.map((r) => ({
+          match_key: r.key,
           fund_code: r.fundCode,
           tx_date: r.txDate,
           tx_type: r.item.tx_type,
+          nav: r.item.nav,
+          amount: r.item.net_from_units ?? r.item.parsed_amount,
         }))
       ),
     ]);
@@ -443,11 +449,11 @@ export function LogMfTxCard() {
           return r.existingMatch === undefined ? { ...r, existingMatch: null } : r;
         }
         // Prefer the strong (TxnID) match — deterministic, no
-        // false positives. Fall back to the weak (fund/date/type)
-        // match only when no source-ref lookup fired or came up empty.
+        // false positives. Fall back to the weak (fund/date/type +
+        // NAV/amount hints) match only when no source-ref lookup
+        // fired or came up empty.
         const strong = r.item.txn_id ? strongMatches[r.item.txn_id.trim()] : null;
-        const weakKey = `${r.fundCode}|${r.txDate}|${r.item.tx_type}`;
-        const weak = weakMatches[weakKey] ?? null;
+        const weak = weakMatches[r.key] ?? null;
 
         const match: BulkRow["existingMatch"] = strong
           ? { ...strong, matchedBy: "source_ref" }
@@ -458,11 +464,11 @@ export function LogMfTxCard() {
         return {
           ...r,
           existingMatch: match,
-          // Auto-uncheck any match — user can still re-check manually if
-          // they know this is a genuinely distinct second trade
-          // (extremely unusual for the strong match; more plausible for
-          // the weak match's "two purchases of same fund same day" case).
-          checked: match ? false : r.checked,
+          // Strong matches (TxnID) are deterministic duplicates and get
+          // auto-unchecked. Weak matches are heuristic only — keep them
+          // checked and show a warning so legitimate second trades on
+          // the same day don't get silently blocked.
+          checked: strong ? false : r.checked,
         };
       });
     });
@@ -682,14 +688,18 @@ export function LogMfTxCard() {
     startTransition(async () => {
       const result = await logMfTransaction({
         fund_code: form.fund_code,
-        tx_date: form.tx_date,
+        // tx_date stores the NAV DATE (mf_transactions schema). When the
+        // user flags a distinct NAV date, that is the authoritative
+        // tx_date and the typed transaction date becomes placed_date —
+        // mirroring the INDmoney bulk path so the NAV date is always
+        // persisted, not merely used for the value lookup.
+        tx_date: form.nav_date_same ? form.tx_date : form.nav_date,
         tx_type: form.tx_type,
         amount_inr: grossParsed,
-        // Omit nav_date entirely when the checkbox is on — server
-        // defaults to tx_date, identical to pre-checkbox behavior.
-        // Only send an explicit value once the user has flagged the
-        // NAV date as genuinely different.
-        nav_date: form.nav_date_same ? null : form.nav_date,
+        // tx_date already IS the NAV date, so no separate override.
+        nav_date: null,
+        // Keep the click/transaction date when it differs from the NAV date.
+        placed_date: form.nav_date_same ? null : form.tx_date,
         nav_override: navOverride,
         description_note:
           form.description_note.trim() === ""
@@ -1216,9 +1226,9 @@ function BulkReviewTable({
                   {r.submitState === "idle" && r.existingMatch?.matchedBy === "weak_key" && (
                     <span
                       className="text-[hsl(var(--warning))]"
-                      title={`Same fund+date+type exists but this order's TxnID isn't tagged on the existing row (source=${r.existingMatch.source}, ${fmtINR(r.existingMatch.amount)}, ${r.existingMatch.units.toFixed(4)} units). Likely the same trade; verify before re-checking. Studio platform=test rows are ignored by this check.`}
+                      title={`Possible near-duplicate match (source=${r.existingMatch.source}, ${fmtINR(r.existingMatch.amount)}, ${r.existingMatch.units.toFixed(4)} units). This is advisory only: row stays selected so a genuinely distinct same-day order can still be logged.`}
                     >
-                      Fund+date already used · {fmtINR(r.existingMatch.amount)}
+                      Possible duplicate · review ({fmtINR(r.existingMatch.amount)})
                     </span>
                   )}
                 </td>

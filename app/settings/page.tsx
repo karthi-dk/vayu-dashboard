@@ -2,6 +2,7 @@ import { EpfCard } from "@/components/settings/EpfCard";
 import { NpsUnitsCard } from "@/components/settings/NpsUnitsCard";
 import { NpsContribCard } from "@/components/settings/NpsContribCard";
 import { getSettingsData } from "@/lib/queries";
+import { withTransientRetry } from "@/lib/transientRetry";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,7 @@ export default async function SettingsPage() {
   // for the (currently retired) V6 daily rotation card. Kept in the query
   // so restoring the card is a component-only change — the Supabase read
   // is cheap and adjacent to other config the page already needs.
-  const { nps, epf } = await getSettingsData();
+  const { nps, epf } = await withTransientRetry(() => getSettingsData());
 
   return (
     <div className="flex flex-col gap-8">

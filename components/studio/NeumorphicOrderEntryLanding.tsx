@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { Volume2, X } from "lucide-react";
-import { logMfTransaction } from "@/app/actions";
-import { lookupNavForFundOnDate } from "@/app/studio/actions";
-import { knownFundCodes } from "@/lib/mf/fundCatalog";
-import { PLATFORMS } from "@/lib/mf/platform";
-import { unlockAudio } from "@/lib/studio/sounds";
+import {
+  useOrderEntryForm,
+  ORDER_ENTRY_AMOUNT_LADDER as AMOUNT_LADDER,
+} from "@/lib/studio/useOrderEntryForm";
+import { SubmitBurst } from "@/components/studio/SubmitBurst";
 import { NeumorphicSelect } from "@/components/studio/NeumorphicSelect";
 import { NeumorphicDatePicker } from "@/components/studio/NeumorphicDatePicker";
 
@@ -49,9 +48,6 @@ import { NeumorphicDatePicker } from "@/components/studio/NeumorphicDatePicker";
  * calmness, not urgency.
  */
 
-const IS_TEST_MODE = process.env.NEXT_PUBLIC_FUNDS_TEST_MODE === "true";
-const AMOUNT_LADDER = [10000, 11000, 12000, 13000, 14000, 15000];
-
 // Neumorphic depth tokens. Each entry maps directly to a
 // `style={nm.xxx}` prop on the corresponding surface. See the
 // "shadow tokens" comment in the header block for why we're not
@@ -77,23 +73,6 @@ const nm = {
   },
 } as const;
 
-function yesterdayISO_IST(): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const y = parts.find((p) => p.type === "year")!.value;
-  const m = parts.find((p) => p.type === "month")!.value;
-  const d = parts.find((p) => p.type === "day")!.value;
-  const today = new Date(`${y}-${m}-${d}T00:00:00Z`);
-  today.setUTCDate(today.getUTCDate() - 1);
-  return today.toISOString().slice(0, 10);
-}
-
-type NavLookupState = "idle" | "loading" | "found" | "notfound";
-
 export function NeumorphicOrderEntryLanding({
   onSubmitted,
   onSkipped,
@@ -101,98 +80,34 @@ export function NeumorphicOrderEntryLanding({
   onSubmitted: () => void;
   onSkipped: () => void;
 }) {
-  const funds = knownFundCodes();
-  const platforms = PLATFORMS.filter((p) => p.code !== "test");
-
-  const [fund, setFund] = useState<string>("");
-  const [amount, setAmount] = useState<number>(AMOUNT_LADDER[0]);
-  const [amountMode, setAmountMode] = useState<"ladder" | "custom">("ladder");
-  const [navDate, setNavDate] = useState<string>(yesterdayISO_IST());
-  const [navValue, setNavValue] = useState<number | null>(null);
-  const [platform, setPlatform] = useState<string>("indmoney");
-  const [customPlatform, setCustomPlatform] = useState<string>("");
-  const [platformMode, setPlatformMode] = useState<"list" | "custom">("list");
-
-  const [navLookupState, setNavLookupState] =
-    useState<NavLookupState>("idle");
-  const [navLookupError, setNavLookupError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
-
-  useEffect(() => {
-    if (!fund || !navDate) return;
-    let cancelled = false;
-    setNavLookupState("loading");
-    setNavLookupError(null);
-    lookupNavForFundOnDate(fund, navDate).then((res) => {
-      if (cancelled) return;
-      if (res.ok) {
-        setNavValue(res.nav);
-        setNavLookupState("found");
-      } else {
-        setNavLookupState("notfound");
-        setNavLookupError(res.error);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [fund, navDate]);
-
-  const units =
-    amount > 0 && navValue && navValue > 0 ? amount / navValue : null;
-  const canSubmit =
-    fund !== "" &&
-    amount > 0 &&
-    navValue != null &&
-    navValue > 0 &&
-    (platformMode === "list" || customPlatform.trim() !== "");
-
-  const handleSubmit = () => {
-    if (!canSubmit) return;
-    setSubmitError(null);
-
-    if (typeof window !== "undefined") {
-      const forced = new URLSearchParams(window.location.search).get(
-        "forceError",
-      );
-      if (forced) {
-        const message =
-          forced === "1"
-            ? 'Upsert failed: duplicate key value violates unique constraint "mf_transactions_tx_hash_key"'
-            : forced;
-        startTransition(async () => {
-          await new Promise((r) => setTimeout(r, 700));
-          setSubmitError(message);
-        });
-        return;
-      }
-    }
-
-    void unlockAudio();
-    void import("@/components/studio/CelebrationOverlay").catch(() => {});
-    const submittedPlatform = IS_TEST_MODE
-      ? "test"
-      : platformMode === "custom"
-        ? customPlatform.trim()
-        : platform;
-    startTransition(async () => {
-      const res = await logMfTransaction({
-        fund_code: fund,
-        tx_date: navDate,
-        tx_type: "purchase",
-        amount_inr: amount,
-        nav_override: navValue!,
-        platform: submittedPlatform,
-        nav_source_label: IS_TEST_MODE ? "studio_test" : "studio_manual",
-      });
-      if (!res.ok) {
-        setSubmitError(res.error);
-        return;
-      }
-      onSubmitted();
-    });
-  };
+  const {
+    funds,
+    platforms,
+    fund,
+    setFund,
+    amount,
+    setAmount,
+    amountMode,
+    setAmountMode,
+    navDate,
+    setNavDate,
+    navValue,
+    setNavValue,
+    platform,
+    setPlatform,
+    customPlatform,
+    setCustomPlatform,
+    platformMode,
+    setPlatformMode,
+    navLookupState,
+    navLookupError,
+    submitError,
+    isPending,
+    units,
+    canSubmit,
+    handleSubmit,
+    submitPulseKey,
+  } = useOrderEntryForm({ onSubmitted });
 
   // Shared class fragments to keep the JSX below scannable. All
   // colour values are inlined hex from the neumorphic palette (not
@@ -424,15 +339,20 @@ export function NeumorphicOrderEntryLanding({
           doubt about which surface is the primary action. The
           soft-indigo #6c7fdd keeps the pastel calmness while
           giving the CTA a clear visual anchor. */}
-      <button
-        type="button"
-        onClick={handleSubmit}
-        disabled={!canSubmit || isPending}
-        className="mt-2 w-full rounded-2xl bg-[#6c7fdd] py-4 text-sm font-medium tracking-wide text-white transition-all hover:bg-[#7d8de5] disabled:cursor-not-allowed disabled:opacity-40"
-        style={nm.ctaRaised}
-      >
-        {isPending ? "Logging…" : "Log allotment"}
-      </button>
+      <div className="relative mt-2">
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={!canSubmit || isPending}
+          className="w-full rounded-2xl bg-[#6c7fdd] py-4 text-sm font-medium tracking-wide text-white transition-all hover:bg-[#7d8de5] disabled:cursor-not-allowed disabled:opacity-40"
+          style={nm.ctaRaised}
+        >
+          {isPending ? "Logging…" : "Log allotment"}
+        </button>
+        {submitPulseKey > 0 && (
+          <SubmitBurst key={submitPulseKey} theme="neumorphic" />
+        )}
+      </div>
 
       <div className="mt-1 flex justify-center">
         <Link

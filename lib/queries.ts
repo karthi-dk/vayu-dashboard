@@ -5,6 +5,8 @@ import type { PostgrestError } from "@supabase/supabase-js";
 // client component, you shouldn't be: this file is server-only.
 import { sbServer as sb } from "./supabase";
 import { computeXirr, type CashFlow } from "./xirr";
+import { buildEpfHistory, type EpfDailyRow } from "./epf/epfHistory";
+import { buildNwHistory, type NwPoint } from "./nwReconstruct";
 // Constant-only import (staleness threshold) — the refreshIndexLevels()
 // function itself is imported lazily inside fetchIndexLevels() so the
 // Yahoo client isn't pulled into the cold-start bundle for pages that
@@ -247,6 +249,34 @@ export type Fund = {
   updated_at: string;
   one_day_change_inr: number | null;
   one_day_change_pct: number | null;
+  // ── Entry-price analysis (enriched in getPortfolioData, not stored) ──
+  // Compares MY entry timing against the fund's own price over the same
+  // window. All optional: undefined until the enrichment runs, and stays
+  // null when there are no priced purchase rows / no NAV history.
+  /**
+   * My amount-weighted average entry NAV (cost basis per unit) =
+   * Σ(purchase amount) / Σ(purchase units), across real purchase rows
+   * only (test/rehearsal rows and redemptions/switches excluded).
+   * Amount-weighted by construction — a ₹30k buy moves it 6× more than
+   * a ₹5k buy — so investment size ("weight") is already baked in.
+   */
+  avg_entry_nav?: number | null;
+  /**
+   * The fund's SIMPLE arithmetic-mean daily NAV over my buying window
+   * [first purchase, last purchase], from `mf_nav_history`. A weight-
+   * neutral "index" to benchmark entry timing against: buying below it
+   * = I concentrated money on cheaper-than-average days (alpha).
+   */
+  period_avg_nav?: number | null;
+  /** First/last purchase dates bounding the window above (tooltip). */
+  entry_window_start?: string | null;
+  entry_window_end?: string | null;
+  /** Count of priced purchase rows behind `avg_entry_nav` (tooltip). */
+  entry_tx_count?: number | null;
+  /** Total units bought (Σ purchase units) — the basis `avg_entry_nav`
+   *  was computed on. Lets the entry-timing edge be shown in rupees:
+   *  `(period_avg_nav − avg_entry_nav) × entry_units`. */
+  entry_units?: number | null;
 };
 
 export type CapType = "large" | "mid" | "small" | "intl" | "debt";
@@ -324,11 +354,10 @@ export type LiquiditySplit = {
   };
 };
 
-// NwAttribution type + computeNwAttribution implementation moved to
-// lib/nwAttribution.ts so it can be called client-side by the range-
-// aware SummaryStrip inside NWTrendChart. Re-exported here so existing
+// NwAttribution type + computeNwAttribution moved to lib/nwReconstruct.ts
+// (the reconstruction-based, exact version). Re-exported here so existing
 // server-side consumers don't need to update their imports.
-export type { NwAttribution } from "./nwAttribution";
+export type { NwAttribution } from "./nwReconstruct";
 
 // Two-bucket asset allocation summary for the Overview page.
 //
@@ -528,6 +557,21 @@ export type OverviewData = {
    * and positive flow — effectively "at least one contribution ingested").
    */
   npsXirr: number | null;
+  /**
+   * EPF-only reconstructed series (cumulative contributions + interest
+   * over time), built from the EPFO passbook history module
+   * (lib/epf/epfHistory.ts). Powers the EPF Growth breakdown chart and
+   * the multi-year EPF sparkline. Pension (EPS) excluded; monotonic
+   * (no cash withdrawals).
+   */
+  epfHistory: EpfDailyRow[];
+  /**
+   * Unified multi-year net-worth timeline (MF + NPS + EPF reconstructed
+   * and summed, reaching back to the first contribution). Powers the
+   * multi-year Net Worth Trend + Composition charts. Its right edge
+   * equals today's nw_daily total. See lib/nwReconstruct.ts.
+   */
+  nwHistory: NwPoint[];
   nps: NpsState | null;
   epf: EpfState | null;
   fundCount: number;
@@ -874,6 +918,16 @@ export type SyncData = {
     total_value_inr: number;
     fund_count: number;
     stale_fund_count: number;
+    stale_funds: Array<{
+      fund_code: string;
+      fund_name: string;
+      nav_date: string | null;
+    }>;
+    fresh_funds: Array<{
+      fund_code: string;
+      fund_name: string;
+      nav_date: string | null;
+    }>;
     has_prev: boolean;
   } | null;
   nps: {
@@ -1173,7 +1227,19 @@ async function fetchConfigMap(): Promise<ConfigMap> {
   const { data, error } = await sb
     .from("portfolio_config")
     .select("key,value");
-  if (error) throw error;
+  if (error) {
+    const code = (error as { code?: string }).code;
+    if (code === "42P01" || code === "PGRST205") {
+      console.warn(
+        "[queries] portfolio_config table missing — continuing with defaults."
+      );
+      return {};
+    }
+    console.warn(
+      `[queries] portfolio_config read failed (code=${code ?? "unknown"}): ${error.message}. Continuing with defaults.`
+    );
+    return {};
+  }
   const map: ConfigMap = {};
   for (const row of data ?? []) map[row.key] = row.value;
   return map;
@@ -1429,11 +1495,11 @@ function computeWealthComposition(input: {
 
   // ── EPF bucket ──
   // lifetime_contribution_inr and lifetime_interest_inr live on
-  // epf_state (2026-07-17-epf-lifetime-split.sql). balance_inr is the
-  // hero number. The `estimated` flag is set to true because the
-  // seed assumes pre-FY25 opening balance = 100% contributions —
-  // slightly overstates contributions. Will drop to false once user
-  // uploads older passbooks and we rebalance.
+  // epf_state. balance_inr is the hero number. As of 2026-08-03 the
+  // split is PASSBOOK-ACCURATE (seeded from the full EPFO passbook
+  // history — see lib/epf/epfHistory.ts + scripts/gen-epf-history.py,
+  // pension excluded) and kept live by the log-credit RPC, so the
+  // bucket is no longer flagged estimated.
   //
   // A missing epf_state row (fresh install) shows a zero-slice donut
   // rather than crashing; the UI handles the "0 total" case as
@@ -1444,13 +1510,14 @@ function computeWealthComposition(input: {
     label: "EPF",
     currentInr: epfCurrent,
     contributionsInr: epfContrib,
-    estimated: (epfContrib ?? 0) > 0, // any seed = estimated for now
+    estimated: false,
   });
 
   // ── NW rollup ──
-  // Sum the three buckets. Only the EPF slice is estimated, so the NW
-  // rollup inherits `estimated: true` — the UI shows the "?" annotation
-  // on the NW pie to hint that its underlying data has a rough edge.
+  // Sum the three buckets. All three splits are now authoritative (MF
+  // from fund_holdings.invested_inr, NPS from total_invested_inr, EPF
+  // from the passbook history), so the NW rollup is no longer flagged
+  // estimated.
   const nwContrib = mf.contributionsInr + nps.contributionsInr + epf.contributionsInr;
   const nwCurrent = mf.currentInr + nps.currentInr + epf.currentInr;
   const nwBucket = buildCompositionBucket({
@@ -1512,7 +1579,14 @@ export async function getOverviewData(): Promise<OverviewData> {
     // Missing tables degrade to empty (see fetchMfLedger); Overview
     // still renders using the legacy `mf_invested` snapshot as
     // fallback in that case.
-    fetchMfLedger(),
+    fetchMfLedger().catch((err: unknown) => {
+      const code = (err as { code?: string })?.code;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[queries] MF ledger fetch failed (code=${code ?? "unknown"}): ${msg}. Continuing without mf_deposits_ledger enrichment.`
+      );
+      return [] as MfLedgerEntry[];
+    }),
     // Reconstructed pre-tracking MF snapshot rows (see
     // scripts/backfill-mf-reconstruction.mjs + the 2026-07-18 daily
     // reconstruction migration). Merged into `history` below so the
@@ -1545,16 +1619,53 @@ export async function getOverviewData(): Promise<OverviewData> {
     // own 42P01/PGRST205 detection). Together they feed
     // buildNpsDailyHistory below to produce the pre-tracking NPS
     // curve, mirroring what mf_daily_reconstructed does for MF.
-    fetchNpsLedger(),
-    fetchNpsNavHistory(),
+    fetchNpsLedger().catch((err: unknown) => {
+      const code = (err as { code?: string })?.code;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[queries] NPS ledger fetch failed (code=${code ?? "unknown"}): ${msg}. Continuing without reconstructed NPS history.`
+      );
+      return [] as NpsTxRow[];
+    }),
+    fetchNpsNavHistory().catch((err: unknown) => {
+      const code = (err as { code?: string })?.code;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[queries] NPS NAV history fetch failed (code=${code ?? "unknown"}): ${msg}. Continuing without reconstructed NPS history.`
+      );
+      return [] as NpsNavRow[];
+    }),
     fetchConfigMap(),
-    fetchIndexLevels(),
+    fetchIndexLevels().catch((err: unknown) => {
+      const code = (err as { code?: string })?.code;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[queries] index_levels fetch failed (code=${code ?? "unknown"}): ${msg}. Continuing with empty index set.`
+      );
+      return [] as IndexLevelRow[];
+    }),
   ]);
   if (nwRes.error) throw nwRes.error;
-  if (npsRes.error) throw npsRes.error;
-  if (epfRes.error) throw epfRes.error;
-  if (fundsRes.error) throw fundsRes.error;
-  if (lastSyncRes.error) throw lastSyncRes.error;
+  if (npsRes.error) {
+    console.warn(
+      `[queries] nps_state read failed (code=${(npsRes.error as { code?: string }).code ?? "unknown"}): ${npsRes.error.message}. Continuing with NPS state=null.`
+    );
+  }
+  if (epfRes.error) {
+    console.warn(
+      `[queries] epf_state read failed (code=${(epfRes.error as { code?: string }).code ?? "unknown"}): ${epfRes.error.message}. Continuing with EPF state=null.`
+    );
+  }
+  if (fundsRes.error) {
+    console.warn(
+      `[queries] fund_holdings read failed (code=${(fundsRes.error as { code?: string }).code ?? "unknown"}): ${fundsRes.error.message}. Continuing with funds=[].`
+    );
+  }
+  if (lastSyncRes.error) {
+    console.warn(
+      `[queries] latest fund_holdings.updated_at read failed (code=${(lastSyncRes.error as { code?: string }).code ?? "unknown"}): ${lastSyncRes.error.message}. Continuing with lastSync=null.`
+    );
+  }
   // Credits table may not exist yet if migration 2026-07-16-retirement-
   // credits-ledger.sql hasn't been applied. Fall back to empty array so
   // the Overview still renders — attribution will treat every NPS/EPF
@@ -1574,7 +1685,9 @@ export async function getOverviewData(): Promise<OverviewData> {
           "2026-07-16-retirement-credits-ledger.sql to enable ledger-based attribution."
       );
     } else {
-      throw creditsRes.error;
+      console.warn(
+        `[queries] retirement_credits read failed (code=${code ?? "unknown"}): ${creditsRes.error.message}. Continuing with credits=[].`
+      );
     }
   }
   // Same graceful-degradation dance for the reconstruction table: missing
@@ -1589,7 +1702,9 @@ export async function getOverviewData(): Promise<OverviewData> {
           "to enable pre-tracking MF chart segment."
       );
     } else {
-      throw reconstructedRes.error;
+      console.warn(
+        `[queries] mf_daily_reconstructed read failed (code=${code ?? "unknown"}): ${reconstructedRes.error.message}. Continuing without reconstructed MF history.`
+      );
     }
   }
 
@@ -1626,7 +1741,9 @@ export async function getOverviewData(): Promise<OverviewData> {
   // day before nw_daily starts. But we still enforce "observed wins"
   // in case of future backfills, an nw_daily gap-fill, or a manual re-
   // reconstruction that ran further forward than intended.
-  const reconstructedRaw = (reconstructedRes.data ?? []) as Array<{
+  const reconstructedRaw = (reconstructedRes.error
+    ? []
+    : reconstructedRes.data ?? []) as Array<{
     date: string;
     mf_value_inr: number;
     mf_invested_inr: number;
@@ -1698,6 +1815,12 @@ export async function getOverviewData(): Promise<OverviewData> {
     history
   );
 
+  // EPF passbook reconstruction + the unified multi-year NW timeline
+  // (MF + NPS + EPF summed, back to day 1). nwHistory's right edge equals
+  // today's nw_daily total, so the trend chart's endpoint matches the
+  // headline NW card.
+  const epfHistory = buildEpfHistory();
+  const nwHistory = buildNwHistory({ mfHistory, npsHistory, epfHistory });
   const latest = history.length ? history[history.length - 1] : null;
   // XIRR needs the real, ledger-precise "today" value as its terminal
   // flow, not a possibly-anchored reconstructed one — nw_daily.nps_value
@@ -1712,8 +1835,10 @@ export async function getOverviewData(): Promise<OverviewData> {
     latest?.nps_value ?? null
   );
   const prev = history.length > 1 ? history[history.length - 2] : null;
-  const nps = (npsRes.data as NpsState) ?? null;
-  const funds = (fundsRes.data ?? []) as Array<{
+  const nps = npsRes.error ? null : (npsRes.data as NpsState) ?? null;
+  const funds = (fundsRes.error
+    ? []
+    : fundsRes.data ?? []) as Array<{
     fund_code: string;
     cap_type: string | null;
     current_value_inr: number | null;
@@ -1754,8 +1879,10 @@ export async function getOverviewData(): Promise<OverviewData> {
         }
       : null;
 
-  const credits = ((creditsRes.data ?? []) as RetirementCredit[]);
-  const epf = (epfRes.data as EpfState) ?? null;
+  const credits = (creditsRes.error
+    ? []
+    : (creditsRes.data ?? [])) as RetirementCredit[];
+  const epf = epfRes.error ? null : (epfRes.data as EpfState) ?? null;
 
   return {
     latest,
@@ -1764,10 +1891,14 @@ export async function getOverviewData(): Promise<OverviewData> {
     mfHistory,
     npsHistory,
     npsXirr,
+    epfHistory,
+    nwHistory,
     nps,
     epf,
     fundCount: funds.length,
-    lastSync: (lastSyncRes.data as { updated_at: string } | null)?.updated_at ?? null,
+    lastSync: lastSyncRes.error
+      ? null
+      : (lastSyncRes.data as { updated_at: string } | null)?.updated_at ?? null,
     config,
     assetSplit,
     nwDeltas: computeNwDeltas(history),
@@ -1779,6 +1910,119 @@ export async function getOverviewData(): Promise<OverviewData> {
 }
 
 // ─── Portfolio page ────────────────────────────────────────────────────────
+
+/**
+ * Entry-price analysis — enriches each `Fund` row in place with my
+ * amount-weighted average entry NAV and the fund's own simple-mean NAV
+ * over the same buying window (see the `Fund.avg_entry_nav` /
+ * `period_avg_nav` docstrings for the full rationale).
+ *
+ * Sources:
+ *   • Purchase rows come from the deduped MF ledger (`fetchMfLedger` —
+ *     the same union Overview/Credits/Studio use), so a CAS-confirmed
+ *     trade isn't double-counted against its Groww/manual twin.
+ *   • The fund's daily NAV curve comes from `mf_nav_history`.
+ *
+ * Exclusions (this is an ENTRY-price question only):
+ *   • platform='test'  → rehearsal rows never touch real metrics.
+ *   • order_type != PURCHASE → redemptions are exits, switches/dividends
+ *     aren't fresh money in.
+ *   • rows without a positive amount AND positive units (can't price).
+ *
+ * Never throws — a missing NAV table just leaves `period_avg_nav` null.
+ */
+async function attachEntryPriceAnalysis(fundRows: Fund[]): Promise<void> {
+  if (fundRows.length === 0) return;
+  const heldCodes = fundRows.map((f) => f.fund_code);
+
+  const [ledger, navRes] = await Promise.all([
+    fetchMfLedger(),
+    fetchAllPagesResult<{ fund_code: string; nav_date: string; nav: number | string }>(
+      (from, to) =>
+        sb
+          .from("mf_nav_history")
+          .select("fund_code,nav_date,nav")
+          .in("fund_code", heldCodes)
+          .range(from, to)
+    ),
+  ]);
+
+  if (navRes.error) {
+    const code = (navRes.error as { code?: string }).code;
+    console.warn(
+      `[queries] mf_nav_history read failed (code=${code ?? "unknown"}): ${navRes.error.message}. Entry-price columns will omit the index NAV.`
+    );
+  }
+
+  // Aggregate my real purchases per fund. `first`/`last` bound the
+  // window I was actually buying in — the honest range to benchmark
+  // against (not an arbitrary calendar span).
+  type EntryAgg = {
+    amount: number;
+    units: number;
+    count: number;
+    first: string;
+    last: string;
+  };
+  const entryByFund = new Map<string, EntryAgg>();
+  for (const e of ledger) {
+    if (!e.fund_code) continue;
+    if (e.platform === "test") continue;
+    if (e.order_type !== "PURCHASE") continue;
+    const amt = e.amount_inr;
+    const units = e.units;
+    if (amt == null || units == null || amt <= 0 || units <= 0) continue;
+    const agg = entryByFund.get(e.fund_code);
+    if (agg) {
+      agg.amount += amt;
+      agg.units += units;
+      agg.count += 1;
+      if (e.order_date < agg.first) agg.first = e.order_date;
+      if (e.order_date > agg.last) agg.last = e.order_date;
+    } else {
+      entryByFund.set(e.fund_code, {
+        amount: amt,
+        units,
+        count: 1,
+        first: e.order_date,
+        last: e.order_date,
+      });
+    }
+  }
+
+  // Group the (already fund-scoped) NAV history for windowed means.
+  const navByFund = new Map<string, Array<{ date: string; nav: number }>>();
+  for (const r of navRes.data ?? []) {
+    const nav = Number(r.nav);
+    if (!Number.isFinite(nav)) continue;
+    const arr = navByFund.get(r.fund_code);
+    if (arr) arr.push({ date: r.nav_date, nav });
+    else navByFund.set(r.fund_code, [{ date: r.nav_date, nav }]);
+  }
+
+  for (const f of fundRows) {
+    const agg = entryByFund.get(f.fund_code);
+    if (!agg || agg.units <= 0) continue;
+    f.avg_entry_nav = agg.amount / agg.units;
+    f.entry_window_start = agg.first;
+    f.entry_window_end = agg.last;
+    f.entry_tx_count = agg.count;
+    f.entry_units = agg.units;
+
+    const navs = navByFund.get(f.fund_code);
+    if (navs && navs.length > 0) {
+      let sum = 0;
+      let n = 0;
+      for (const p of navs) {
+        if (p.date >= agg.first && p.date <= agg.last) {
+          sum += p.nav;
+          n += 1;
+        }
+      }
+      if (n > 0) f.period_avg_nav = sum / n;
+    }
+  }
+}
 
 export async function getPortfolioData(): Promise<PortfolioData> {
   // fund_holdings_detail (~930 rows) and master_security_classification
@@ -1824,6 +2068,19 @@ export async function getPortfolioData(): Promise<PortfolioData> {
   if (latestNw.error) throw latestNw.error;
 
   const fundRows = (funds.data ?? []) as Fund[];
+
+  // Enrich each fund with entry-price analysis (my amount-weighted avg
+  // entry NAV vs the fund's own average NAV over my buying window).
+  // Wrapped so a ledger/NAV read hiccup degrades to "columns show —"
+  // instead of breaking the whole portfolio page.
+  try {
+    await attachEntryPriceAnalysis(fundRows);
+  } catch (err) {
+    console.warn(
+      "[queries] entry-price analysis failed; rendering funds without it.",
+      err
+    );
+  }
 
   // Top 5 per fund
   const topByFund: Record<string, FundHoldingDetail[]> = {};
@@ -2434,6 +2691,33 @@ export async function getSyncData(): Promise<SyncData> {
         (f) => f.nav_date != null && f.nav_date < mfHeadlineDate!
       ).length
     : 0;
+  const mfStaleFunds = mfHeadlineDate
+    ? fundRows
+        .filter((f) => f.nav_date != null && f.nav_date < mfHeadlineDate)
+        .map((f) => ({
+          fund_code: f.fund_code,
+          fund_name: f.fund_name,
+          nav_date: f.nav_date,
+        }))
+        .sort((a, b) => {
+          const ad = a.nav_date ?? "";
+          const bd = b.nav_date ?? "";
+          if (ad !== bd) return ad < bd ? -1 : 1;
+          return a.fund_code < b.fund_code ? -1 : a.fund_code > b.fund_code ? 1 : 0;
+        })
+    : [];
+  const mfFreshFunds = mfHeadlineDate
+    ? fundRows
+        .filter((f) => f.nav_date === mfHeadlineDate)
+        .map((f) => ({
+          fund_code: f.fund_code,
+          fund_name: f.fund_name,
+          nav_date: f.nav_date,
+        }))
+        .sort((a, b) =>
+          a.fund_code < b.fund_code ? -1 : a.fund_code > b.fund_code ? 1 : 0
+        )
+    : [];
   // Pick nav_source based on most-recent nav_updated_at across all
   // funds. If a Groww paste just landed and mfapi hasn't yet caught up,
   // the badge says "Groww" — accurate provenance.
@@ -2635,6 +2919,8 @@ export async function getSyncData(): Promise<SyncData> {
           total_value_inr: mfTotalValue,
           fund_count: fundRows.length,
           stale_fund_count: mfStaleCount,
+          stale_funds: mfStaleFunds,
+          fresh_funds: mfFreshFunds,
           has_prev: mfHasPrev,
         }
       : null,
@@ -3161,6 +3447,11 @@ function buildCumulativeDepositMap(entries: MfLedgerEntry[]): Map<string, number
   // day collapse to a single date entry).
   const perDate = new Map<string, number>();
   for (const e of entries) {
+    // Rehearsal/test rows (platform='test') never count toward real
+    // deposit totals — keeps the Overview MF card base + the MF Growth
+    // chart's Deposits curve aligned with cost basis and external
+    // brokers, which all exclude test data.
+    if (e.platform === "test") continue;
     if (!e.amount_inr || !e.order_date) continue;
     let signed = 0;
     if (e.order_type === "PURCHASE") signed = e.amount_inr;

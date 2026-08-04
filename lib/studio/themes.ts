@@ -23,6 +23,11 @@ export const STUDIO_THEMES = [
     label: "Soft",
     hint: "Neumorphic extruded",
   },
+  {
+    href: "/studio/skeuomorphic",
+    label: "Skeuo",
+    hint: "Tactile skeuomorphic",
+  },
 ] as const;
 
 export function isStudioThemeActive(pathname: string, href: string): boolean {

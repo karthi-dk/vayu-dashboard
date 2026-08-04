@@ -116,6 +116,7 @@ export default function NeumorphicStudioPage() {
           }}
           refreshKey={refreshKey}
           initialData={preloadedData}
+          studioTheme="neumorphic"
         />
       )}
     </div>

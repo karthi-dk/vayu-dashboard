@@ -7,16 +7,18 @@
 export default function Loading() {
   return (
     <div
-      className="flex min-h-[40vh] flex-col items-center justify-center gap-3"
+      className="pointer-events-none fixed inset-0 z-40 grid place-items-center"
       role="status"
       aria-live="polite"
       aria-label="Loading page"
     >
-      <div
-        className="h-7 w-7 animate-spin rounded-full border-2 border-[hsl(var(--primary)/0.25)] border-t-[hsl(var(--primary))]"
-        aria-hidden
-      />
-      <p className="text-xs text-muted-foreground">Loading…</p>
+      <div className="flex flex-col items-center gap-3">
+        <div
+          className="h-7 w-7 animate-spin rounded-full border-2 border-[hsl(var(--primary)/0.25)] border-t-[hsl(var(--primary))]"
+          aria-hidden
+        />
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import Lottie, { type LottieRefCurrentProps } from "lottie-react";
@@ -58,6 +58,46 @@ const FALLBACK_BUFFER_MS = 130;
  *  first layout is stable (no aspect-ratio deferred height). */
 const SQUARE_SIZE = "min(90vw, 90dvh)";
 
+function resolveCelebrationBackdrop(pathname: string | null): {
+  className: string;
+  style?: CSSProperties;
+} {
+  const base = "fixed inset-0 z-40 flex items-center justify-center";
+
+  // Keep the aurora visible under the burst for glassmorphic.
+  if (pathname?.startsWith("/studio/glassmorphic")) {
+    return { className: `${base} bg-transparent` };
+  }
+
+  if (pathname?.startsWith("/studio/neumorphic")) {
+    return {
+      className: base,
+      style: { background: "#e0e5ec" },
+    };
+  }
+
+  if (pathname?.startsWith("/studio/claymorphic")) {
+    return {
+      className: base,
+      style: {
+        background: "linear-gradient(180deg, #f6f7ff 0%, #e9eeff 100%)",
+      },
+    };
+  }
+
+  if (pathname?.startsWith("/studio/skeuomorphic")) {
+    return {
+      className: base,
+      style: {
+        background:
+          "radial-gradient(circle at 12% 8%, rgba(255, 255, 255, 0.45), transparent 38%), radial-gradient(circle at 88% 14%, rgba(147, 113, 66, 0.10), transparent 42%), linear-gradient(180deg, #efe5d4 0%, #e4d6bf 100%)",
+      },
+    };
+  }
+
+  return { className: `${base} bg-background` };
+}
+
 export default function CelebrationOverlay({ onDone }: { onDone: () => void }) {
   const pathname = usePathname();
   const lottieRef = useRef<LottieRefCurrentProps>(null);
@@ -65,10 +105,7 @@ export default function CelebrationOverlay({ onDone }: { onDone: () => void }) {
   const advancedRef = useRef(false);
   const [mounted, setMounted] = useState(false);
   const [ready, setReady] = useState(false);
-
-  // Portaled outside `.studio-glassmorphic-scope`, so keep the aurora
-  // visible under the burst on that theme (no solid curtain).
-  const transparentBackdrop = pathname?.includes("/studio/glassmorphic");
+  const backdrop = resolveCelebrationBackdrop(pathname);
 
   const advance = () => {
     if (advancedRef.current) return;
@@ -163,14 +200,10 @@ export default function CelebrationOverlay({ onDone }: { onDone: () => void }) {
 
   return createPortal(
     <div
-      className={
-        transparentBackdrop
-          ? "fixed inset-0 z-40 flex items-center justify-center bg-transparent"
-          : "fixed inset-0 z-40 flex items-center justify-center bg-background"
-      }
+      className={backdrop.className}
       // Pin to the layout viewport explicitly. Avoid 100vw (includes
       // scrollbar gutter on some engines and can bias the flex box).
-      style={{ width: "100%", height: "100%" }}
+      style={{ width: "100%", height: "100%", ...backdrop.style }}
       aria-hidden
     >
       <div

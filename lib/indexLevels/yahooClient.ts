@@ -84,6 +84,65 @@ const USER_AGENT =
 const DAY_SECONDS = 86_400;
 
 /**
+ * Recover a single trading day's close from Yahoo's INTRADAY feed.
+ * =================================================================
+ *
+ * Yahoo's *daily* bars occasionally carry a fully-null OHLC row for a
+ * genuine trading day (timestamp present, open/high/low/close/adjclose
+ * all null) — observed live for the NSE indices on 2026-08-03, where
+ * that Monday session was blank in the 1d series for every Nifty ticker
+ * while US indices were unaffected. When the null day is the session
+ * IMMEDIATELY before "today", the daily-series "previous close" silently
+ * skips back to the prior good bar (e.g. Friday), so "today's move"
+ * quietly becomes a multi-session move — and can even flip sign.
+ *
+ * The intraday feed (`range=5d&interval=1h`) still carries that day, so
+ * we reconstruct the missing session's close as its last usable intraday
+ * bar. Returns null on any failure (network / shape / day-not-present)
+ * so the caller can fall back to the daily-series previous close.
+ */
+async function recoverCloseFromIntraday(
+  ticker: string,
+  targetDay: number
+): Promise<{ ts: number; close: number } | null> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+    ticker
+  )}?range=5d&interval=1h`;
+  try {
+    const resp = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!resp.ok) return null;
+    const json = (await resp.json()) as {
+      chart?: {
+        result?: Array<{
+          timestamp?: number[];
+          indicators?: { quote?: Array<{ close?: (number | null)[] }> };
+        }>;
+      };
+    };
+    const res = json.chart?.result?.[0];
+    const timestamps = res?.timestamp ?? [];
+    const closes = res?.indicators?.quote?.[0]?.close ?? [];
+    let best: { ts: number; close: number } | null = null;
+    for (let i = 0; i < timestamps.length; i++) {
+      const c = closes[i];
+      if (c == null || !Number.isFinite(c) || c <= 0) continue;
+      if (
+        Math.floor(timestamps[i] / DAY_SECONDS) === targetDay &&
+        (best === null || timestamps[i] > best.ts)
+      ) {
+        best = { ts: timestamps[i], close: c };
+      }
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch one index's full daily-close history and derive current / ATH /
  * 52w-high / 3m-high from it — all four numbers computed off the SAME
  * series so they're internally consistent.
@@ -214,9 +273,47 @@ export async function fetchIndexLevel(def: {
   // Works regardless of whether the meta backfill above pushed a new
   // point: if it did, [len-2] is the most recent completed daily bar
   // (which IS the previous close); if it didn't, [len-2] is the trading
-  // day before Yahoo's own latest bar. Either way, [len-2] is exactly
-  // the previous trading day's close relative to `current`.
-  const previous = points.length >= 2 ? points[points.length - 2] : null;
+  // day before Yahoo's own latest bar. Either way, [len-2] is the last
+  // USABLE daily bar before `current`.
+  const seriesPrev = points.length >= 2 ? points[points.length - 2] : null;
+
+  // Null-gap guard (see recoverCloseFromIntraday): Yahoo emits a
+  // timestamp for EVERY trading day, including ones whose daily OHLC is
+  // fully null. So the raw `timestamps` array — not the null-filtered
+  // `points` — is the source of truth for "which day was the previous
+  // session". If the most recent trading day strictly before `current`
+  // is NEWER than the last usable daily bar, Yahoo dropped that
+  // session's close and `seriesPrev` is a session (or more) too far
+  // back — which both misstates today's move AND lets a dropped
+  // record-high session go missing from the ATH/52w/3m windows. Recover
+  // the dropped close from the intraday feed; fall back to `seriesPrev`
+  // if recovery fails.
+  const currentDay = Math.floor(current.ts / DAY_SECONDS);
+  let prevTradingDay: number | null = null;
+  for (const ts of timestamps) {
+    const day = Math.floor(ts / DAY_SECONDS);
+    if (day < currentDay && (prevTradingDay === null || day > prevTradingDay)) {
+      prevTradingDay = day;
+    }
+  }
+  const seriesPrevDay = seriesPrev ? Math.floor(seriesPrev.ts / DAY_SECONDS) : null;
+
+  let previous: { ts: number; close: number } | null = seriesPrev;
+  if (
+    prevTradingDay !== null &&
+    (seriesPrevDay === null || prevTradingDay > seriesPrevDay)
+  ) {
+    const recovered = await recoverCloseFromIntraday(def.ticker, prevTradingDay);
+    if (recovered != null) {
+      previous = recovered;
+      // Feed the recovered close back into the series so the ATH / 52w /
+      // 3m "% below high" columns don't skip it either: the dropped
+      // session can itself BE the window high (NSE's 2026-08-03 close
+      // was the real all-time high for Midcap 150), which would
+      // otherwise show today wrongly sitting AT the peak (0.0%).
+      points.push(recovered);
+    }
+  }
 
   let ath = points[0];
   for (const p of points) if (p.close > ath.close) ath = p;

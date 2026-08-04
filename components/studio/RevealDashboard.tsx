@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, RotateCcw } from "lucide-react";
 import { GrowthChart } from "@/components/studio/GrowthChart";
 import { StatsRow } from "@/components/studio/StatsRow";
@@ -12,6 +12,12 @@ import {
   playSwoosh,
   playVerdict,
 } from "@/lib/studio/sounds";
+import {
+  createStudioTelemetryRunId,
+  recordStudioInteraction,
+  recordStudioTimingSample,
+  type StudioTelemetryTheme,
+} from "@/lib/studio/recordingTelemetry";
 
 /**
  * RevealDashboard — the post-submit / post-skip state of /studio.
@@ -196,6 +202,7 @@ export function RevealDashboard({
   onReset,
   refreshKey = 0,
   initialData = null,
+  studioTheme = "unknown",
 }: {
   wasSubmit: boolean;
   onReset: () => void;
@@ -213,6 +220,9 @@ export function RevealDashboard({
    *  preload), we fall back to the classic mount-time fetch and
    *  the LoadingSkeleton renders briefly. */
   initialData?: StudioData | null;
+  /** Theme label from the page shell (classic/clay/glass/soft).
+   *  Used to segment timing telemetry by visual variant. */
+  studioTheme?: StudioTelemetryTheme;
 }) {
   // Seed with preloaded data if provided — this is what removes
   // the skeleton flash. When the parent has already fetched during
@@ -232,6 +242,10 @@ export function RevealDashboard({
   // staggers all restart from t=0 without needing a form round-trip.
   // Gated by SHOW_STUDIO_REPLAY (temp-on for recording).
   const [replayCount, setReplayCount] = useState<number>(0);
+  // One run id per reveal ceremony; replay gets a fresh id.
+  const telemetryRunId = useMemo(() => createStudioTelemetryRunId(), [
+    replayCount,
+  ]);
   // Submit path = animate. Skip path = static. Once data has landed
   // for the first time in a submit session, subsequent refreshes
   // don't re-animate — that would look wrong (numbers "rewinding"
@@ -332,11 +346,49 @@ export function RevealDashboard({
   // we don't get orphan sounds if the user hits Back mid-animation.
   useEffect(() => {
     if (!shouldAnimate || data == null) return;
-    playSwoosh();
-    const dingId = window.setTimeout(playDing, STUDIO_TIMING.PILL_BEGIN);
-    const rollupId = window.setTimeout(
-      playRollupForReveal,
-      STUDIO_TIMING.ROLLUP_SOUND_BEGIN
+    const sequenceStart = performance.now();
+    const scheduleAudio = (
+      name: "swoosh" | "ding" | "rollup" | "verdict",
+      scheduledMs: number,
+      play: () => void
+    ): number | null => {
+      if (scheduledMs <= 0) {
+        play();
+        recordStudioTimingSample({
+          runId: telemetryRunId,
+          theme: studioTheme,
+          name,
+          scheduledMs,
+          actualMs: Math.max(0, performance.now() - sequenceStart),
+        });
+        return null;
+      }
+
+      return window.setTimeout(() => {
+        recordStudioTimingSample({
+          runId: telemetryRunId,
+          theme: studioTheme,
+          name,
+          scheduledMs,
+          actualMs: Math.max(0, performance.now() - sequenceStart),
+        });
+        play();
+      }, scheduledMs);
+    };
+
+    recordStudioInteraction({
+      runId: telemetryRunId,
+      theme: studioTheme,
+      name: "reveal.sequence.start",
+      metadata: { replayCount, wasSubmit },
+    });
+
+    const swooshId = scheduleAudio("swoosh", 0, playSwoosh);
+    const dingId = scheduleAudio("ding", STUDIO_TIMING.PILL_BEGIN, playDing);
+    const rollupId = scheduleAudio(
+      "rollup",
+      STUDIO_TIMING.ROLLUP_SOUND_BEGIN,
+      playRollupForReveal
     );
     // Capture the 1D snapshot values at effect-run time so the
     // verdict fires with the numbers the user is watching settle,
@@ -345,16 +397,33 @@ export function RevealDashboard({
     // by construction).
     const oneDayInr = data.stats.oneDayInr;
     const oneDayPct = data.stats.oneDayPct;
-    const verdictId = window.setTimeout(
-      () => playVerdict(oneDayInr, oneDayPct),
-      STUDIO_TIMING.VERDICT_BEGIN
+    const verdictId = scheduleAudio(
+      "verdict",
+      STUDIO_TIMING.VERDICT_BEGIN,
+      () => playVerdict(oneDayInr, oneDayPct)
     );
     return () => {
-      window.clearTimeout(dingId);
-      window.clearTimeout(rollupId);
-      window.clearTimeout(verdictId);
+      if (swooshId != null) {
+        window.clearTimeout(swooshId);
+      }
+      if (dingId != null) {
+        window.clearTimeout(dingId);
+      }
+      if (rollupId != null) {
+        window.clearTimeout(rollupId);
+      }
+      if (verdictId != null) {
+        window.clearTimeout(verdictId);
+      }
     };
-  }, [data, shouldAnimate, replayCount]);
+  }, [
+    data,
+    replayCount,
+    shouldAnimate,
+    studioTheme,
+    telemetryRunId,
+    wasSubmit,
+  ]);
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -381,7 +450,15 @@ export function RevealDashboard({
                recording / tuning. */
             <button
               type="button"
-              onClick={() => setReplayCount((n) => n + 1)}
+              onClick={() => {
+                recordStudioInteraction({
+                  runId: telemetryRunId,
+                  theme: studioTheme,
+                  name: "reveal.replay.click",
+                  metadata: { replayCount },
+                });
+                setReplayCount((n) => n + 1);
+              }}
               aria-label="Replay animation"
               title="Replay animation"
               className="flex h-8 items-center gap-1.5 rounded-md border border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)] px-2.5 text-xs text-[hsl(var(--warning))] transition-colors hover:bg-[hsl(var(--warning)/0.2)]"
@@ -432,8 +509,18 @@ export function RevealDashboard({
             initial={false}
             animate={{ opacity: 1 }}
           >
-            <GrowthChart data={data.chart} shouldAnimate={shouldAnimate} />
-            <StatsRow stats={data.stats} shouldAnimate={shouldAnimate} />
+            <GrowthChart
+              data={data.chart}
+              shouldAnimate={shouldAnimate}
+              telemetryRunId={telemetryRunId}
+              telemetryTheme={studioTheme}
+            />
+            <StatsRow
+              stats={data.stats}
+              shouldAnimate={shouldAnimate}
+              telemetryRunId={telemetryRunId}
+              telemetryTheme={studioTheme}
+            />
           </motion.div>
         ) : null}
       </AnimatePresence>

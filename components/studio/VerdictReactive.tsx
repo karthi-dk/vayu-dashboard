@@ -263,7 +263,7 @@ export function VerdictReactive({
 
   return (
     <motion.div
-      className="relative rounded-lg"
+      className="studio-verdict-ring relative z-[1] rounded-lg"
       animate={activeAnimate}
       transition={{
         duration: config.duration,

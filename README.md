@@ -38,13 +38,20 @@ npm run build
 npm start   # port 5000
 ```
 
+Local artifact isolation:
+- `npm run dev` writes to `.next-dev/`
+- `npm run build` + `npm start` write/read `.next-build/`
+
+This prevents dev chunk/CSS corruption when running build-time checks
+while the dev server is active.
+
 ### Packaging the project for handover
 
 ```bash
 npm run zip     # → vayu-dashboard.zip (~800 KB)
 ```
 
-The script excludes `node_modules`, `.next`, `.git`, `.env.local`, and
+The script excludes `node_modules`, `.next`, `.next-dev`, `.next-build`, `.git`, `.env.local`, and
 build caches — everything the receiver can regenerate from
 `package-lock.json` and `npm run build`. After unzipping, run
 `npm install` and follow the "Getting started" steps above.
@@ -73,7 +80,9 @@ after a deploy to pick up the new build.
 | `APP_USERNAME` | server only | Login username |
 | `APP_PASSWORD` | server only | Login password |
 | `APP_SESSION_SECRET` | server only | HMAC key for session cookies |
+| `ENABLE_DEBUG_DIAGNOSTICS` | server only | Set `true` to enable sensitive debug diagnostics in production (`/api/debug/*`) |
 | `NEXT_PUBLIC_FUNDS_TEST_MODE` | server + browser | When `true`, Studio submits use `platform=test` (isolated from headline math). No UI banner — purge rows from Sync. |
+| `NEXT_PUBLIC_STUDIO_MP3_OVERRIDES` | server + browser | Set `true` to probe optional `/assets/sounds/*.mp3` overrides; default synth-only mode keeps startup quieter |
 | `DHAN_TOKEN_ID` | server only | Fund holdings resync via Dhan API |
 
 ## Security model
@@ -148,7 +157,7 @@ as the existing 12 tables.
 
 | Route | Data source |
 |---|---|
-| `/` | `nw_daily`, `nps_state`, `epf_state`, `fund_holdings`, `portfolio_config` |
+| `/` | `nw_daily`, `nps_state`, `epf_state`, `fund_holdings`, `portfolio_config`, `index_levels` + committed reconstruction modules `lib/epf/epfHistory` (multi-year EPF) and `lib/nwReconstruct` (multi-year net worth) |
 | `/portfolio` | `fund_holdings`, `fund_holdings_detail`, `master_security_classification` |
 | `/sync` | Groww paste, MF tx logger, **Studio test-data purge**, NPS CRA, NAV refresh, fund resync |
 | `/settings` | `nps_state`, `epf_state`, `portfolio_config` + server actions |
@@ -170,18 +179,22 @@ as the existing 12 tables.
 
 - **`POST /api/sync-groww`** — paste Groww portfolio JSON, upserts `fund_holdings`, recomputes `nw_daily`
 - **`POST /api/sync-fund-holdings/[isin]`** — fetch from Dhan, classify against `master_security_classification`, atomic replace via `replace_fund_holdings` RPC
+- **`POST /api/studio-telemetry/events`** — authenticated batched ingest for Studio reveal timing events (cross-device pilot capture)
+- **`DELETE /api/studio-telemetry/events?mode=all`** — erase shared Studio telemetry rows to control DB growth (`mode=older_than_days&days=30` supported)
+- **`GET /api/studio-telemetry/summary?days=30`** — shared pilot summary from Supabase (theme/device/browser coverage + timing drift)
 
 ## Studio — mobile order entry with cinematic reveal
 
 `/studio` is a self-contained MF-purchase-logging experience distinct from
 the main dashboard. Mobile-first, one-fund-per-session, and heavy on
-motion + audio feedback. Same reveal pipeline is also mounted under three
+motion + audio feedback. Same reveal pipeline is also mounted under four
 alternate skins for A/B comparison:
 
 - `/studio` (default / Classic)
 - `/studio/claymorphic`
 - `/studio/glassmorphic`
 - `/studio/neumorphic`
+- `/studio/skeuomorphic`
 
 Theme deep links also appear in TopNav (desktop Studio dropdown) and the
 in-studio theme pill (`StudioThemeSwitch`).
@@ -207,6 +220,28 @@ Five families, each localStorage-backed and picker-driven from
 `/studio/sounds`. Registries live in `lib/studio/sounds.ts`. See
 [HANDOVER.md](./HANDOVER.md) for verdict design rationale and the recipe
 for adding a new variant.
+
+### Pilot telemetry (shared across devices)
+
+Studio reveal telemetry is captured locally first, then auto-synced in
+batches to Supabase when the user is online and authenticated.
+
+- Local browser cache keys:
+  - `studio.recording.telemetry.v1`
+  - `studio.recording.telemetry.pending.v1`
+- Server table: `studio_recording_telemetry`
+- Migration file: `migrations/2026-07-30-studio-recording-telemetry.sql`
+- Runtime context captured per event:
+  - full user agent
+  - device class + browser family + platform (Android/iOS/macOS/Windows/Linux)
+  - runtime surface (`browser_tab`, installed app/PWA shell, Android TWA)
+  - display mode (`browser`, `standalone`, `minimal-ui`, `fullscreen`, `window-controls-overlay`)
+
+If you're already on the base telemetry migration, also run:
+- `migrations/2026-07-30-studio-recording-telemetry-surface.sql`
+
+If Ops shows a `table_missing` error in the shared telemetry block,
+run the migration in Supabase SQL Editor and refresh `/ops`.
 
 ## File layout
 

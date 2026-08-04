@@ -15,7 +15,7 @@ import { Card } from "@/components/ui/Card";
 import { RangeSelector } from "@/components/ui/RangeSelector";
 import { fmtL } from "@/lib/utils";
 import { filterByRange, useChartRange } from "@/lib/useChartRange";
-import type { NwRow } from "@/lib/queries";
+import type { NwPoint } from "@/lib/nwReconstruct";
 
 // Same localStorage convention as NWTrendChart — separate key so the two
 // charts can carry independent last-selected windows.
@@ -71,7 +71,7 @@ function CompositionTooltip({
   payload,
 }: {
   active?: boolean;
-  payload?: { payload: NwRow }[];
+  payload?: { payload: NwPoint }[];
 }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
@@ -90,8 +90,8 @@ function CompositionTooltip({
         <TooltipRow
           color={COLORS.epf}
           label="EPF"
-          value={p.epf_estimate}
-          pct={pct(p.epf_estimate)}
+          value={p.epf_value}
+          pct={pct(p.epf_value)}
         />
         <div className="mt-1 flex items-center justify-between gap-4 border-t border-border pt-1">
           <span className="text-muted-foreground">Total</span>
@@ -104,7 +104,7 @@ function CompositionTooltip({
   );
 }
 
-export function NWCompositionChart({ history }: { history: NwRow[] }) {
+export function NWCompositionChart({ history }: { history: NwPoint[] }) {
   const { range, setRange } = useChartRange(STORAGE_KEY, "ALL");
   const filtered = filterByRange(history, range);
   const single = filtered.length <= 1;
@@ -233,18 +233,26 @@ export function NWCompositionChart({ history }: { history: NwRow[] }) {
                 }}
                 verticalAlign="top"
                 align="right"
+                // Pin legend order (MF · NPS · EPF) independent of the
+                // bottom→top stack order so it matches the tooltip.
+                payload={[
+                  { value: "MF", type: "square", id: "mf", color: COLORS.mf },
+                  { value: "NPS", type: "square", id: "nps", color: COLORS.nps },
+                  { value: "EPF", type: "square", id: "epf", color: COLORS.epf },
+                ]}
               />
-              {/* Stack order (bottom → top): MF, NPS, EPF. Keeps the largest
-                  and most volatile band grounded and the smallest (NPS) tucked
-                  between two stabler layers. */}
+              {/* Stack order (bottom → top): EPF, NPS, MF — EPF grounded at
+                  the base, MF (largest / most volatile) riding on top. The
+                  legend above is pinned to MF · NPS · EPF via an explicit
+                  payload so it stays in sync with the tooltip. */}
               <Area
                 type="monotone"
-                dataKey="mf_value"
-                name="MF"
+                dataKey="epf_value"
+                name="EPF"
                 stackId="1"
-                stroke={COLORS.mf}
+                stroke={COLORS.epf}
                 strokeWidth={1.5}
-                fill="url(#nw-comp-mf)"
+                fill="url(#nw-comp-epf)"
               />
               <Area
                 type="monotone"
@@ -257,12 +265,12 @@ export function NWCompositionChart({ history }: { history: NwRow[] }) {
               />
               <Area
                 type="monotone"
-                dataKey="epf_estimate"
-                name="EPF"
+                dataKey="mf_value"
+                name="MF"
                 stackId="1"
-                stroke={COLORS.epf}
+                stroke={COLORS.mf}
                 strokeWidth={1.5}
-                fill="url(#nw-comp-epf)"
+                fill="url(#nw-comp-mf)"
               />
             </AreaChart>
           </ResponsiveContainer>

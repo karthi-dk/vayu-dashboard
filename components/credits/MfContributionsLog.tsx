@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ChevronDown,
@@ -9,11 +10,15 @@ import {
   Landmark,
   ArrowUpRight,
   ArrowDownRight,
+  Loader2,
+  Trash2,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { cn, fmtDateIST, fmtINR } from "@/lib/utils";
 import type { MfLedgerEntry } from "@/lib/queries";
+import { deleteManualMfLedgerEntry } from "@/app/actions";
 import { useVisibleMonths, currentMonthKey } from "./useVisibleMonths";
 import { MonthPicker } from "./MonthPicker";
 import {
@@ -138,10 +143,62 @@ export function MfContributionsLog({
   entries: MfLedgerEntry[];
   pendingCount: number;
 }) {
+  const router = useRouter();
+  const [deletePending, startDeleteTransition] = useTransition();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmDeleteEntry, setConfirmDeleteEntry] =
+    useState<MfLedgerEntry | null>(null);
+
   // Filter chip: "All funds" or specific fund_code. Unresolved rows
   // (fund_code IS NULL) are grouped under a synthetic "__unresolved__"
   // key so the user can find them if they need to fix mappings.
   const [fundFilter, setFundFilter] = useState<string>("__all__");
+
+  function handleDeleteManualEntry(entry: MfLedgerEntry) {
+    if (entry.source !== "manual" || deletePending) return;
+    setDeleteError(null);
+    setConfirmDeleteEntry(entry);
+  }
+
+  function handleConfirmDeleteManualEntry() {
+    const entry = confirmDeleteEntry;
+    if (!entry || entry.source !== "manual") return;
+
+    setDeleteError(null);
+    setDeletingId(entry.id);
+    startDeleteTransition(async () => {
+      try {
+        const result = await deleteManualMfLedgerEntry({ tx_hash: entry.id });
+        if (!result.ok) {
+          setDeleteError(result.error);
+          return;
+        }
+        setConfirmDeleteEntry(null);
+        router.refresh();
+      } finally {
+        setDeletingId(null);
+      }
+    });
+  }
+
+  // Keep the dialog behavior aligned with other app modals.
+  useEffect(() => {
+    if (!confirmDeleteEntry) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !deletePending) {
+        setDeleteError(null);
+        setConfirmDeleteEntry(null);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [confirmDeleteEntry, deletePending]);
 
   // Available filter values — derived from data so it stays in sync
   // even as new funds show up in future backfills. Each entry carries
@@ -276,6 +333,12 @@ export function MfContributionsLog({
                 already settled and don&apos;t appear here.
               </div>
             </div>
+          </div>
+        )}
+
+        {deleteError && (
+          <div className="mt-3 rounded-md border border-[hsl(var(--danger)/0.35)] bg-[hsl(var(--danger)/0.08)] px-3 py-2 text-xs text-[hsl(var(--danger))]">
+            {deleteError}
           </div>
         )}
       </Card>
@@ -419,14 +482,15 @@ export function MfContributionsLog({
                             //                    that ingest path today).
                             //   Line 2 (small): "NAV <date>" — labelled
                             //                    just like the Groww row.
-                            //                    Only rendered when the
-                            //                    NAV date differs from
-                            //                    the placed date (i.e.
+                            //                    Shown whenever a distinct
+                            //                    placed date exists (i.e.
                             //                    post-3PM-cutoff INDmoney
-                            //                    orders). Same-day rows
-                            //                    fold to a single date
-                            //                    line to keep T+0
-                            //                    purchases uncluttered.
+                            //                    orders). When there's no
+                            //                    distinct placed date, the
+                            //                    top-line date already IS
+                            //                    the NAV date, so we tag it
+                            //                    "NAV date" instead of
+                            //                    hiding the label.
                             //
                             // Rationale: earlier iteration flipped these
                             // (NAV big, "Placed" subtitle) which broke
@@ -441,14 +505,19 @@ export function MfContributionsLog({
                                 {fmtDateIST(o.placed_date ?? o.order_date)}
                               </div>
                               {o.placed_date &&
-                                o.placed_date !== o.order_date && (
-                                  <div
-                                    className="mt-0.5 text-[10px] leading-tight text-muted-foreground"
-                                    title="Post-3PM-cutoff order (or placed on a non-trading day) — the AMC applied the NAV of the next trading day, not the click day."
-                                  >
-                                    NAV {fmtDateIST(o.order_date)}
-                                  </div>
-                                )}
+                              o.placed_date !== o.order_date ? (
+                                <div
+                                  className="mt-0.5 text-[10px] leading-tight text-muted-foreground"
+                                  title="Post-3PM-cutoff order (or placed on a non-trading day) — the AMC applied the NAV of the next trading day, not the click day."
+                                >
+                                  NAV {fmtDateIST(o.order_date)}
+                                </div>
+                              ) : (
+                                // Hand-typed manual rows have no distinct placed date, so the top-line date already IS the picked NAV date — tag it so the NAV date is never invisible.
+                                <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
+                                  NAV date
+                                </div>
+                              )}
                             </>
                           ) : (
                             <>
@@ -637,6 +706,24 @@ export function MfContributionsLog({
                                 Number(o.amount_inr)
                               )}`
                             : "—"}
+                          {isManual && (
+                            <div className="mt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteManualEntry(o)}
+                                disabled={deletePending}
+                                className="inline-flex items-center gap-1 rounded border border-[hsl(var(--danger)/0.3)] px-1.5 py-0.5 text-[10px] font-medium text-[hsl(var(--danger))] hover:bg-[hsl(var(--danger)/0.08)] disabled:pointer-events-none disabled:opacity-50"
+                                title="Delete this manual MF entry"
+                              >
+                                {deletePending && deletingId === o.id ? (
+                                  <Loader2 size={10} className="animate-spin" />
+                                ) : (
+                                  <Trash2 size={10} />
+                                )}
+                                Delete
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </li>
                     );
@@ -647,6 +734,84 @@ export function MfContributionsLog({
           </Card>
         );
       })}
+
+      {confirmDeleteEntry && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !deletePending) {
+              setDeleteError(null);
+              setConfirmDeleteEntry(null);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mf-delete-confirm-title"
+            className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-2xl"
+          >
+            <h3
+              id="mf-delete-confirm-title"
+              className="text-base font-semibold text-foreground"
+            >
+              Delete manual MF entry?
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This will permanently delete the entry and update holdings totals.
+            </p>
+
+            <div className="mt-3 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-foreground">
+              <div className="font-medium">
+                {confirmDeleteEntry.fund_code ??
+                  confirmDeleteEntry.scheme_name ??
+                  "Manual entry"}
+              </div>
+              <div className="mt-1 text-muted-foreground">
+                {fmtDateIST(confirmDeleteEntry.order_date)}
+                {confirmDeleteEntry.amount_inr != null
+                  ? ` · ${fmtINR(Number(confirmDeleteEntry.amount_inr))}`
+                  : ""}
+              </div>
+            </div>
+
+            {deleteError && (
+              <p className="mt-3 rounded-md border border-[hsl(var(--danger)/0.35)] bg-[hsl(var(--danger)/0.08)] px-3 py-2 text-xs text-[hsl(var(--danger))]">
+                {deleteError}
+              </p>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={deletePending}
+                onClick={() => {
+                  setDeleteError(null);
+                  setConfirmDeleteEntry(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={deletePending}
+                onClick={handleConfirmDeleteManualEntry}
+                className="bg-[hsl(var(--danger))] text-white hover:bg-[hsl(var(--danger)/0.9)]"
+              >
+                {deletePending && deletingId === confirmDeleteEntry.id ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Trash2 size={12} />
+                )}
+                Confirm delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
