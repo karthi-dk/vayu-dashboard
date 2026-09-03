@@ -6,12 +6,17 @@ import { WealthCompositionCard } from "@/components/overview/WealthCompositionCa
 import { NWTrendChart } from "@/components/overview/NWTrendChart";
 import { NWCompositionChart } from "@/components/overview/NWCompositionChart";
 import { MFGrowthBreakdown } from "@/components/overview/MFGrowthBreakdown";
+import { MfDeltasCard } from "@/components/overview/MfDeltasCard";
+import { InternationalCard } from "@/components/overview/InternationalCard";
+import { IntlGrowthBreakdown } from "@/components/overview/IntlGrowthBreakdown";
+import { IntlFundGrowthChart } from "@/components/overview/IntlFundGrowthChart";
 import { NpsGrowthBreakdown } from "@/components/overview/NpsGrowthBreakdown";
 import { EpfGrowthBreakdown } from "@/components/overview/EpfGrowthBreakdown";
 import { IndexHighsCard } from "@/components/overview/IndexHighsCard";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { getOverviewData } from "@/lib/queries";
 import { withTransientRetry } from "@/lib/transientRetry";
-import { fmtDateShort, fmtL } from "@/lib/utils";
+import { fmtCompactINR, fmtDateShort, fmtL } from "@/lib/utils";
 
 // Force fresh reads on every visit — this is a personal dashboard, no caching
 // benefits and the underlying data changes hourly.
@@ -40,11 +45,18 @@ export default async function OverviewPage() {
     epfHistory,
     nwHistory,
     npsXirr,
+    npsSchemeBreakdown,
     nps,
     epf,
     fundCount,
+    mfNavDate,
+    mfStaleCount,
     assetSplit,
     nwDeltas,
+    mfDeltas,
+    intlDeltas,
+    international,
+    intlHistory,
     liquiditySplit,
     credits,
     wealthComposition,
@@ -206,13 +218,48 @@ export default async function OverviewPage() {
     latest && mfReferenceBase != null && mfReferenceBase > 0
       ? ((latest.mf_value - mfReferenceBase) / mfReferenceBase) * 100
       : latest?.mf_gain_pct ?? 0;
+  const mfProfitInr =
+    latest && mfReferenceBase != null && mfReferenceBase > 0
+      ? latest.mf_value - mfReferenceBase
+      : null;
+
+  // EPF invested-vs-return split. Contributed = the hard passbook number
+  // (lifetime_contribution_inr); interest = everything above it in the
+  // displayed estimate, so it always reconciles to the card's ₹ value.
+  const epfContributed = epf?.lifetime_contribution_inr ?? null;
+  const epfInterestInr =
+    latest && epfContributed != null
+      ? latest.epf_estimate - epfContributed
+      : null;
+  const epfReturnPct =
+    epfContributed != null && epfContributed > 0 && epfInterestInr != null
+      ? (epfInterestInr / epfContributed) * 100
+      : null;
+
+  // International: spark from the reconstructed + observed intl curve (back
+  // to ICICI's Feb start), 1D preferring the stored intl_1d over a snapshot.
+  const intlSpark = intlHistory.length
+    ? intlHistory.map((r) => ({ v: r.intl_value }))
+    : history
+        .filter((r) => r.intl_value != null)
+        .map((r) => ({ v: Number(r.intl_value) }));
+  const intlDayChange =
+    international?.oneDayInr != null && international?.oneDayPct != null
+      ? { inr: international.oneDayInr, pct: international.oneDayPct }
+      : latest && prev && latest.intl_value != null && prev.intl_value != null
+        ? buildDayChange(Number(latest.intl_value), Number(prev.intl_value))
+        : null;
 
   return (
     <div className="flex flex-col gap-8">
       <HeadlineNW latest={latest} prev={prev} deltas={nwDeltas} credits={credits} />
 
       {latest ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div
+          className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${
+            international ? "lg:grid-cols-4" : "md:grid-cols-3"
+          }`}
+        >
           <StatCard
             label="Mutual Funds"
             meta={`${fundCount} holdings`}
@@ -228,6 +275,12 @@ export default async function OverviewPage() {
                 >
                   {mfGainPct >= 0 ? "+" : ""}
                   {mfGainPct.toFixed(2)}%
+                  {mfProfitInr != null && (
+                    <span className="opacity-80">
+                      {" "}
+                      ({fmtCompactINR(mfProfitInr, { sign: true })})
+                    </span>
+                  )}
                 </span>{" "}
                 vs {mfReferenceLabel} {fmtL(mfReferenceBase ?? 0)}
               </>
@@ -236,12 +289,109 @@ export default async function OverviewPage() {
             sparkData={mfSpark}
             dayChange={mfDayChange}
             dayChangeSince={prevDateShort}
+            navDate={mfNavDate}
+            navStaleCount={mfStaleCount}
             dayChangeTitle={
               latest.mf_1d_change_inr != null
                 ? "Groww 1D returns — fund-level NAV move (matches Groww exactly, excludes new investments and NAV publish timing lag)"
                 : undefined
             }
           />
+          <StatCard
+            label="EPF"
+            meta={
+              epf
+                ? `${epf.interest_rate_pct}% interest · verified ${fmtDateShort(
+                    epf.last_verified_date
+                  )}`
+                : "EPF"
+            }
+            value={latest.epf_estimate}
+            subline={
+              // Mirrors the MF/NPS gain line: contributed (passbook) vs
+              // accrued interest. EPF never loses, so this "return" is
+              // lifetime interest ÷ contributions — cumulative, not annualised
+              // (tooltip clarifies). Falls back to the verified stamp only
+              // before the passbook split is seeded.
+              epfContributed != null &&
+              epfInterestInr != null &&
+              epfReturnPct != null ? (
+                <Tooltip
+                  align="start"
+                  content={
+                    <span>
+                      Lifetime interest credited ÷ your contributions.
+                      Guaranteed {epf?.interest_rate_pct}% p.a. — shown
+                      cumulative, not annualised.
+                    </span>
+                  }
+                >
+                  <span className="cursor-help">
+                    <span
+                      className={
+                        epfInterestInr >= 0
+                          ? "text-[hsl(var(--success))]"
+                          : "text-[hsl(var(--danger))]"
+                      }
+                    >
+                      {epfInterestInr >= 0 ? "+" : ""}
+                      {epfReturnPct.toFixed(1)}%
+                      <span className="opacity-80">
+                        {" "}
+                        ({fmtCompactINR(epfInterestInr, { sign: true })})
+                      </span>
+                    </span>{" "}
+                    vs contributed {fmtL(epfContributed)}
+                  </span>
+                </Tooltip>
+              ) : epf?.last_verified_date ? (
+                <>Verified {fmtDateShort(epf.last_verified_date)}</>
+              ) : (
+                <span className="text-muted-foreground/70">
+                  Not yet verified
+                </span>
+              )
+            }
+            pctOfNw={total > 0 ? (latest.epf_estimate / total) * 100 : 0}
+            sparkData={epfSpark}
+            // EPF is a step-change asset (monthly payroll + annual
+            // interest); a "1D" chip on it is misleading — see the
+            // 1D-chip-strategy comment above.
+            dayChange={null}
+            dayChangeSince={null}
+          />
+          {international && (
+            <StatCard
+              label="International"
+              meta={`${international.funds.length} holdings · USD+INR`}
+              value={international.value}
+              subline={
+                <>
+                  <span
+                    className={
+                      international.gainPct >= 0
+                        ? "text-[hsl(var(--success))]"
+                        : "text-[hsl(var(--danger))]"
+                    }
+                  >
+                    {international.gainPct >= 0 ? "+" : ""}
+                    {international.gainPct.toFixed(2)}%
+                    <span className="opacity-80">
+                      {" "}
+                      ({fmtCompactINR(international.value - international.invested, { sign: true })})
+                    </span>
+                  </span>{" "}
+                  vs invested {fmtL(international.invested)}
+                </>
+              }
+              pctOfNw={total > 0 ? (international.value / total) * 100 : 0}
+              sparkData={intlSpark.length ? intlSpark : [{ v: international.value }]}
+              dayChange={intlDayChange}
+              dayChangeSince={prevDateShort}
+              navDate={international.navDate}
+              navStaleCount={international.navStaleCount}
+            />
+          )}
           <StatCard
             label="NPS"
             meta={
@@ -267,6 +417,10 @@ export default async function OverviewPage() {
                   >
                     {npsGainPct >= 0 ? "+" : ""}
                     {npsGainPct.toFixed(2)}%
+                    <span className="opacity-80">
+                      {" "}
+                      ({fmtCompactINR(latest.nps_value - npsInvested, { sign: true })})
+                    </span>
                   </span>{" "}
                   vs invested {fmtL(npsInvested)}
                 </>
@@ -282,31 +436,7 @@ export default async function OverviewPage() {
             sparkData={npsSpark}
             dayChange={npsDayChange}
             dayChangeSince={prevDateShort}
-          />
-          <StatCard
-            label="EPF"
-            meta={epf ? `${epf.interest_rate_pct}% interest` : "EPF"}
-            value={latest.epf_estimate}
-            subline={
-              // Was previously "+₹X/mo contribution" — retired when cron
-              // auto-adds were replaced by the /credits ledger (Jul 16, 2026).
-              // Replaced with the last-verified stamp so the user can see at
-              // a glance how stale the balance is vs the EPFO passbook.
-              epf?.last_verified_date ? (
-                <>Verified {fmtDateShort(epf.last_verified_date)}</>
-              ) : (
-                <span className="text-muted-foreground/70">
-                  Not yet verified
-                </span>
-              )
-            }
-            pctOfNw={total > 0 ? (latest.epf_estimate / total) * 100 : 0}
-            sparkData={epfSpark}
-            // EPF is a step-change asset (monthly payroll + annual
-            // interest); a "1D" chip on it is misleading — see the
-            // 1D-chip-strategy comment above.
-            dayChange={null}
-            dayChangeSince={null}
+            navDate={nps?.nav_date ?? null}
           />
         </div>
       ) : (
@@ -346,7 +476,18 @@ export default async function OverviewPage() {
 
       <NWTrendChart history={nwHistory} />
       <MFGrowthBreakdown history={mfHistory} />
-      <NpsGrowthBreakdown history={npsHistory} xirr={npsXirr} />
+      <MfDeltasCard deltas={mfDeltas} />
+      <IntlGrowthBreakdown history={intlHistory} />
+      <InternationalCard international={international} deltas={intlDeltas} />
+      <IntlFundGrowthChart
+        fundCode="HDFC_INTL_DM"
+        title="HDFC Intl DM · NAV vs FX growth"
+      />
+      <NpsGrowthBreakdown
+        history={npsHistory}
+        xirr={npsXirr}
+        schemeRows={npsSchemeBreakdown}
+      />
       <EpfGrowthBreakdown history={epfHistory} />
 
       {/* Market-wide reference, not portfolio-derived — deliberately last,

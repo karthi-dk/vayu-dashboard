@@ -11,6 +11,7 @@ import {
   Landmark,
   TrendingUp,
   LineChart,
+  Globe,
   RefreshCw as RefreshCwIcon,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
@@ -22,6 +23,7 @@ import type { MfNavSource, NavSource, SyncData } from "@/lib/queries";
 
 type Props = {
   mf: SyncData["mf"];
+  intl: SyncData["intl"];
   nps: SyncData["nps"];
   indexLevels: SyncData["indexLevels"];
 };
@@ -66,7 +68,7 @@ type Props = {
  * per-source status (green ok / amber fallback / red failed) so you
  * can spot which side is broken without reading the message.
  */
-export function RefreshNavsCard({ mf, nps, indexLevels }: Props) {
+export function RefreshNavsCard({ mf, intl, nps, indexLevels }: Props) {
   const router = useRouter();
   // "partial" is a distinct visual state for cases where the endpoints
   // succeeded (HTTP 200 ok=true) but per-fund outcomes show mixed
@@ -90,6 +92,10 @@ export function RefreshNavsCard({ mf, nps, indexLevels }: Props) {
     "ok" | "partial" | "error" | null
   >(null);
   const [indexUpdatedAt, setIndexUpdatedAt] = useState<string | null>(null);
+  const [intlMessage, setIntlMessage] = useState<string | null>(null);
+  const [intlStatus, setIntlStatus] = useState<
+    "ok" | "partial" | "error" | null
+  >(null);
 
   async function refresh() {
     setState("loading");
@@ -101,10 +107,12 @@ export function RefreshNavsCard({ mf, nps, indexLevels }: Props) {
     setFallbackReason(null);
     setIndexMessage(null);
     setIndexStatus(null);
+    setIntlMessage(null);
+    setIntlStatus(null);
 
-    // All three requests fire concurrently. Promise.allSettled ensures
+    // All four requests fire concurrently. Promise.allSettled ensures
     // a failure on one doesn't abort the others' write paths server-side.
-    const [mfRes, npsRes, indexRes] = await Promise.allSettled([
+    const [mfRes, npsRes, indexRes, intlRes] = await Promise.allSettled([
       fetch("/api/refresh-mf-nav", { method: "POST" }).then(async (r) => {
         const body = await r.json();
         if (!r.ok || !body.ok) {
@@ -151,6 +159,22 @@ export function RefreshNavsCard({ mf, nps, indexLevels }: Props) {
           failed: number;
           total: number;
           message: string;
+        };
+      }),
+      fetch("/api/refresh-hdfc-intl-nav", { method: "POST" }).then(async (r) => {
+        const body = await r.json();
+        if (!r.ok || !body.ok) {
+          throw new Error(body.error || `HTTP ${r.status}`);
+        }
+        return body as {
+          ok: true;
+          fx_usd_inr?: number;
+          outcomes: Array<{
+            fund_code: string;
+            state: "rotated" | "remarked_fx" | "skipped_stale" | "failed";
+            delta_inr?: number;
+            error?: string;
+          }>;
         };
       }),
     ]);
@@ -241,6 +265,34 @@ export function RefreshNavsCard({ mf, nps, indexLevels }: Props) {
           : String(indexRes.reason)
       );
       setIndexStatus("error");
+    }
+
+    // ── International branch ──
+    if (intlRes.status === "fulfilled") {
+      const outcomes = intlRes.value.outcomes ?? [];
+      const failed = outcomes.filter((o) => o.state === "failed").length;
+      if (outcomes.length === 0) {
+        setIntlStatus("ok");
+        setIntlMessage("No International holdings to refresh.");
+      } else if (failed === outcomes.length) {
+        setIntlStatus("error");
+        setIntlMessage("International refresh failed.");
+      } else if (failed > 0) {
+        setIntlStatus("partial");
+        setIntlMessage(
+          `${outcomes.length - failed}/${outcomes.length} refreshed · ${failed} failed`
+        );
+      } else {
+        setIntlStatus("ok");
+        setIntlMessage("International NAVs updated");
+      }
+    } else {
+      setIntlStatus("error");
+      setIntlMessage(
+        intlRes.reason instanceof Error
+          ? intlRes.reason.message
+          : String(intlRes.reason)
+      );
     }
 
     // ── Combined status ──
@@ -340,6 +392,27 @@ export function RefreshNavsCard({ mf, nps, indexLevels }: Props) {
       setMessage((prev) => (prev ? `${prev} · Index highs refreshed` : "Index highs refreshed"));
     }
 
+    // Fold International into the headline only when it needs attention;
+    // the International panel already shows the per-fund outcome detail.
+    if (intlRes.status === "fulfilled") {
+      const failed = intlRes.value.outcomes.filter(
+        (o) => o.state === "failed"
+      ).length;
+      if (failed > 0) {
+        setState((prev) => (prev === "error" ? "error" : "partial"));
+        setMessage((prev) =>
+          prev
+            ? `${prev} · International ${failed} failed`
+            : `International ${failed} failed`
+        );
+      }
+    } else {
+      setState((prev) => (prev === "error" ? "error" : "partial"));
+      setMessage((prev) =>
+        prev ? `${prev} · International failed` : "International failed"
+      );
+    }
+
     router.refresh();
   }
 
@@ -358,7 +431,7 @@ export function RefreshNavsCard({ mf, nps, indexLevels }: Props) {
                 Refresh NAVs
               </h3>
               <p className="mt-0.5 kicker">
-                Mutual Funds · NPS · Index highs · Fetches latest prices
+                Mutual Funds · International · NPS · Index highs
               </p>
             </div>
             <Button
@@ -380,12 +453,18 @@ export function RefreshNavsCard({ mf, nps, indexLevels }: Props) {
             </Button>
           </div>
 
-          {/* Three mini-panels side-by-side — MF, NPS, Index highs */}
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          {/* Mini-panels — MF · International · NPS · Index highs */}
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MfPanel
               mf={mf}
               message={mfMessage}
               status={mfStatus}
+              isLoading={isLoading}
+            />
+            <IntlPanel
+              intl={intl}
+              message={intlMessage}
+              status={intlStatus}
               isLoading={isLoading}
             />
             <NpsPanel
@@ -574,7 +653,108 @@ function FundListChip({
     </div>
   );
 }
+// ── International mini-panel ───────────────────────────────────────
 
+function IntlPanel({
+  intl,
+  message,
+  status,
+  isLoading,
+}: {
+  intl: SyncData["intl"];
+  message: string | null;
+  status: "ok" | "partial" | "error" | null;
+  isLoading: boolean;
+}) {
+  const dotColor: "success" | "warning" | "danger" = isLoading
+    ? "warning"
+    : status === "error"
+      ? "danger"
+      : status === "partial"
+        ? "warning"
+        : status === "ok"
+          ? "success"
+          : intl?.nav_updated_at
+            ? "success"
+            : "warning";
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-muted/10 p-3">
+      <div className="flex items-center gap-1.5">
+        <Globe size={12} className="text-muted-foreground" />
+        <div className="kicker">International</div>
+      </div>
+      {intl ? (
+        <>
+          <div className="mt-1.5 text-sm font-semibold text-foreground">
+            {fmtL(intl.total_value_inr)}
+            <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+              · {intl.fund_count} {intl.fund_count === 1 ? "fund" : "funds"}
+            </span>
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]">
+            <div className="flex items-center gap-1">
+              <PulseDot color={dotColor} />
+              <span className="text-muted-foreground">
+                {intl.nav_updated_at ? (
+                  <>
+                    Last refreshed <TimeAgo isoDate={intl.nav_updated_at} />
+                  </>
+                ) : (
+                  "Never refreshed"
+                )}
+              </span>
+            </div>
+            {intl.nav_date && (
+              <span className="text-muted-foreground">
+                · NAVs as of {fmtDateShort(intl.nav_date)}
+              </span>
+            )}
+            {intl.stale_fund_count > 0 && (
+              <span
+                className="inline-flex items-center gap-1 rounded bg-[hsl(var(--warning)/0.15)] px-1.5 py-0.5 text-[9px] font-medium text-[hsl(var(--warning))]"
+                title={`${intl.stale_fund_count} fund(s) awaiting a fresher NAV — HDFC GIFT City publishes on a T+1/T+2 cadence.`}
+              >
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-1.5 w-1.5 rounded-full bg-[hsl(var(--warning))]"
+                />
+                {intl.stale_fund_count} stale
+              </span>
+            )}
+          </div>
+
+          {intl.nav_date && (
+            <div className="mt-2 grid grid-cols-1 gap-1.5 text-[10px] leading-snug">
+              <FundListChip
+                tone="success"
+                label={`Fresh (${intl.fresh_funds.length})`}
+                names={intl.fresh_funds.map((f) => f.fund_code)}
+              />
+              {intl.stale_funds.length > 0 && (
+                <FundListChip
+                  tone="warning"
+                  label={`Stale (${intl.stale_funds.length})`}
+                  names={intl.stale_funds.map(
+                    (f) => `${f.fund_code}${f.nav_date ? `(${fmtDateShort(f.nav_date)})` : ""}`
+                  )}
+                />
+              )}
+            </div>
+          )}
+
+          {message && (
+            <div className="mt-2 text-[10px] text-muted-foreground">{message}</div>
+          )}
+        </>
+      ) : (
+        <div className="mt-1.5 text-[11px] text-muted-foreground">
+          No International holdings yet.
+        </div>
+      )}
+    </div>
+  );
+}
 // ── NPS mini-panel ───────────────────────────────────────────────────────
 
 function NpsPanel({

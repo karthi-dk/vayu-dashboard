@@ -1,4 +1,4 @@
-import type { MfDailyRow, NpsDailyRow } from "./queries";
+import type { MfDailyRow, NpsDailyRow, IntlDailyRow } from "./queries";
 import type { EpfDailyRow } from "./epf/epfHistory";
 
 /**
@@ -22,6 +22,7 @@ export type NwPoint = {
   mf_value: number;
   nps_value: number;
   epf_value: number;
+  intl_value: number;
   total_nw: number;
   /** Cumulative MF net deposits (ledger, test excluded), ₹. */
   mf_contribution: number;
@@ -29,6 +30,8 @@ export type NwPoint = {
   nps_contribution: number;
   /** Cumulative EPF contributions (employee + employer), ₹. */
   epf_contribution: number;
+  /** Cumulative International net deposits, ₹. */
+  intl_contribution: number;
   total_contribution: number;
 };
 
@@ -46,10 +49,12 @@ export type NwAttribution = {
   mfDeposits: number;
   npsDeposits: number;
   epfDeposits: number;
+  intlDeposits: number;
   totalContributions: number;
   mfMarket: number;
   npsMarket: number;
   epfInterest: number;
+  intlMarket: number;
   totalGrowth: number;
   totalNwChange: number;
   hasMissingCreditsData: boolean;
@@ -73,18 +78,21 @@ export function buildNwHistory(input: {
   mfHistory: MfDailyRow[];
   npsHistory: NpsDailyRow[];
   epfHistory: EpfDailyRow[];
+  intlHistory: IntlDailyRow[];
 }): NwPoint[] {
   const byDate = (a: { date: string }, b: { date: string }) =>
     a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
   const mf = [...input.mfHistory].sort(byDate);
   const nps = [...input.npsHistory].sort(byDate);
   const epf = [...input.epfHistory].sort(byDate);
+  const intl = [...input.intlHistory].sort(byDate);
 
   const allDates = Array.from(
     new Set([
       ...mf.map((r) => r.date),
       ...nps.map((r) => r.date),
       ...epf.map((r) => r.date),
+      ...intl.map((r) => r.date),
     ])
   ).sort();
   if (allDates.length === 0) return [];
@@ -94,10 +102,12 @@ export function buildNwHistory(input: {
     mf_value: 0,
     nps_value: 0,
     epf_value: 0,
+    intl_value: 0,
     total_nw: 0,
     mf_contribution: 0,
     nps_contribution: 0,
     epf_contribution: 0,
+    intl_contribution: 0,
     total_contribution: 0,
   };
   const points: NwPoint[] = [zero];
@@ -106,14 +116,17 @@ export function buildNwHistory(input: {
   let mi = -1;
   let ni = -1;
   let ei = -1;
+  let ii = -1;
   for (const d of allDates) {
     while (mi + 1 < mf.length && mf[mi + 1].date <= d) mi++;
     while (ni + 1 < nps.length && nps[ni + 1].date <= d) ni++;
     while (ei + 1 < epf.length && epf[ei + 1].date <= d) ei++;
+    while (ii + 1 < intl.length && intl[ii + 1].date <= d) ii++;
 
     const mfRow = mi >= 0 ? mf[mi] : null;
     const npsRow = ni >= 0 ? nps[ni] : null;
     const epfRow = ei >= 0 ? epf[ei] : null;
+    const intlRow = ii >= 0 ? intl[ii] : null;
 
     const mf_value = mfRow?.mf_value ?? 0;
     // Prefer ledger net deposits (test excluded); fall back to the
@@ -125,17 +138,22 @@ export function buildNwHistory(input: {
     const nps_contribution = npsRow?.nps_invested ?? 0;
     const epf_value = epfRow?.epf_value ?? 0;
     const epf_contribution = epfRow?.epf_contribution ?? 0;
+    const intl_value = intlRow?.intl_value ?? 0;
+    const intl_contribution = intlRow?.intl_invested ?? 0;
 
     points.push({
       date: d,
       mf_value,
       nps_value,
       epf_value,
-      total_nw: mf_value + nps_value + epf_value,
+      intl_value,
+      total_nw: mf_value + nps_value + epf_value + intl_value,
       mf_contribution,
       nps_contribution,
       epf_contribution,
-      total_contribution: mf_contribution + nps_contribution + epf_contribution,
+      intl_contribution,
+      total_contribution:
+        mf_contribution + nps_contribution + epf_contribution + intl_contribution,
     });
   }
 
@@ -156,12 +174,14 @@ export function computeNwAttribution(window: NwPoint[]): NwAttribution | null {
   const mfDeposits = last.mf_contribution - first.mf_contribution;
   const npsDeposits = last.nps_contribution - first.nps_contribution;
   const epfDeposits = last.epf_contribution - first.epf_contribution;
-  const totalContributions = mfDeposits + npsDeposits + epfDeposits;
+  const intlDeposits = last.intl_contribution - first.intl_contribution;
+  const totalContributions = mfDeposits + npsDeposits + epfDeposits + intlDeposits;
 
   const mfMarket = last.mf_value - first.mf_value - mfDeposits;
   const npsMarket = last.nps_value - first.nps_value - npsDeposits;
   const epfInterest = last.epf_value - first.epf_value - epfDeposits;
-  const totalGrowth = mfMarket + npsMarket + epfInterest;
+  const intlMarket = last.intl_value - first.intl_value - intlDeposits;
+  const totalGrowth = mfMarket + npsMarket + epfInterest + intlMarket;
 
   const totalNwChange = last.total_nw - first.total_nw;
   if (Math.abs(totalNwChange) < 100 && Math.abs(totalContributions) < 100) {
@@ -178,10 +198,12 @@ export function computeNwAttribution(window: NwPoint[]): NwAttribution | null {
     mfDeposits,
     npsDeposits,
     epfDeposits,
+    intlDeposits,
     totalContributions,
     mfMarket,
     npsMarket,
     epfInterest,
+    intlMarket,
     totalGrowth,
     totalNwChange,
     hasMissingCreditsData: false,

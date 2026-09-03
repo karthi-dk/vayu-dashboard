@@ -1,6 +1,10 @@
 import { DonutCard } from "@/components/portfolio/DonutCard";
 import { HoldingsTable } from "@/components/portfolio/HoldingsTable";
+import { InternationalHoldings } from "@/components/portfolio/InternationalHoldings";
+import { ForeignLookthroughCard } from "@/components/portfolio/ForeignLookthroughCard";
+import { CountryCompositionCard } from "@/components/portfolio/CountryCompositionCard";
 import { SectorExposure } from "@/components/portfolio/SectorExposure";
+import { ForeignSectorExposure } from "@/components/portfolio/ForeignSectorExposure";
 import { PortfolioHeadline } from "@/components/portfolio/PortfolioHeadline";
 import { SectorConcentrationStrip } from "@/components/portfolio/SectorConcentrationStrip";
 import { TopStocksCard } from "@/components/portfolio/TopStocksCard";
@@ -13,6 +17,7 @@ export const dynamic = "force-dynamic";
 
 const ASSET_COLORS: Record<string, string> = {
   mf: "hsl(248 85% 72%)",
+  intl: "hsl(280 65% 70%)",
   epf: "hsl(160 60% 55%)",
   nps: "hsl(200 80% 65%)",
 };
@@ -21,7 +26,8 @@ const ASSET_COLORS: Record<string, string> = {
 // palette in sync with the old cap-split donut so returning users
 // don't have to relearn what each slice means.
 const CAP_COLORS: Record<string, string> = {
-  large: "hsl(248 85% 72%)",
+  n50: "hsl(248 85% 72%)", // indigo — same hue the old "large" slice used
+  nn50: "hsl(210 80% 63%)", // sky blue — related to N50 but distinct
   mid: "hsl(150 60% 55%)",
   small: "hsl(350 75% 65%)",
 };
@@ -50,6 +56,9 @@ export default async function PortfolioPage() {
     crossFundOverlap,
     sectorConcentration,
     stocksBySector,
+    intlFunds,
+    intlTotal,
+    foreignLookthrough,
   } = await withTransientRetry(() => getPortfolioData());
 
   return (
@@ -63,7 +72,7 @@ export default async function PortfolioPage() {
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Aggregate view across {fmtL(totalNw)} of tracked assets ·{" "}
-          {funds.length} mutual funds, NPS, EPF
+          {funds.length} mutual funds, International, NPS, EPF
         </p>
       </div>
 
@@ -81,7 +90,7 @@ export default async function PortfolioPage() {
       {/* Donut row — three levels of drill-down, left → right:
           1. Asset allocation:       portfolio → MF vs NPS vs EPF
           2. MF composition:         MF → Indian equity vs Debt vs Intl
-          3. Indian equity cap split: Indian equity → Large vs Mid vs Small
+          3. Indian equity cap split: Indian equity → N50 / NN50 / Mid / Small
 
           Donuts 2 & 3 replace the old single "Equity cap split" donut
           which grouped funds by SEBI cap_type and got the ratios wrong:
@@ -89,8 +98,8 @@ export default async function PortfolioPage() {
           when a slice of their holdings sat in mid/small stocks. Both
           new donuts are look-through per stock, so a "large-cap" fund
           holding US ADRs reports those as International here, not as
-          Large. NN50 stocks count as 100% Large in the split (per the
-          2026-07-27 convention). */}
+          Large. The Large tier is split into Nifty 50 vs Nifty Next 50
+          via each stock's NSE index membership. */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {assetAllocation.length > 0 && (
           <DonutCard
@@ -104,18 +113,18 @@ export default async function PortfolioPage() {
         )}
         {mfComposition.length > 0 && (
           <DonutCard
-            title="MF composition"
+            title="Fund composition"
             kicker="Indian equity · Debt · International"
             data={mfComposition}
             colors={MF_COMPOSITION_COLORS}
             total={mfTotal}
-            totalLabel="MF Total"
+            totalLabel="Fund Total"
           />
         )}
         {indianEquityCapSplit.length > 0 && indianEquityTotal > 0 && (
           <DonutCard
             title="Indian equity cap split"
-            kicker="Large · Mid · Small (NN50 counted as Large)"
+            kicker="Nifty 50 · Next 50 · Mid · Small"
             data={indianEquityCapSplit}
             colors={CAP_COLORS}
             total={indianEquityTotal}
@@ -128,6 +137,19 @@ export default async function PortfolioPage() {
           opens FundDetailsModal (same modal used by Fetch fund
           holdings on the Sync page) with the per-fund cap breakdown. */}
       <HoldingsTable funds={funds} mfTotal={mfTotal} />
+
+      {/* International holdings — separate asset class (ICICI Nasdaq +
+          HDFC GIFT City), trimmed to the columns that translate to a
+          currency-mixed foreign book. */}
+      <InternationalHoldings funds={intlFunds} intlTotal={intlTotal} />
+
+      {/* Cross-fund foreign look-through — your real per-company exposure
+          summed across ICICI + HDFC + domestic funds' US slices. */}
+      <ForeignLookthroughCard data={foreignLookthrough} />
+
+      {/* Country composition of the foreign book — click a country to drill
+          into its holdings. */}
+      <CountryCompositionCard countries={foreignLookthrough.countries} />
 
       {/* A — Top 10 aggregated look-through positions. Answers "what
           are my actual biggest stock bets?" — a question the per-fund
@@ -150,6 +172,11 @@ export default async function PortfolioPage() {
           mfTotal={mfTotal}
         />
       </div>
+
+      {/* Foreign counterpart of the sector card — the GICS sector mix of
+          your overseas book (ICICI + HDFC + domestic funds' US slices),
+          as % of foreign. Clickable tiles drill into the companies. */}
+      <ForeignSectorExposure sectors={foreignLookthrough.sectors} />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sbServer } from "@/lib/supabase";
 import { recomputeNwDaily } from "@/lib/recomputeNwDaily";
-import { istDate } from "@/lib/istDate";
+import { istDate, previousBusinessDay } from "@/lib/istDate";
 
 /**
  * NPS daily NAV refresh — Kotak primary + npsnav.in fallback
@@ -372,11 +372,31 @@ async function handler() {
     }
 
     // Pick a nav_date. All three schemes should report the same date; if
-    // they disagree, take whichever is non-null (fall back to today's IST
-    // date if all null — shouldn't happen but the defensive default keeps
-    // us from writing NULL nav_date).
-    const navDate =
-      eResp.navDate ?? cResp.navDate ?? gResp.navDate ?? istDate();
+    // they disagree, take whichever is non-null. Fall back to the previous
+    // business day (NOT today) if all null — today is the FETCH day, never
+    // the valuation day for an evening-declared NAV.
+    let navDate =
+      eResp.navDate ?? cResp.navDate ?? gResp.navDate ?? previousBusinessDay(istDate());
+
+    // Roll a today-stamped NAV back to the prior trading day. NPS declares
+    // each day's NAV in the evening (~9pm IST); Kotak's morning ENTRY_DATE
+    // stamps a freshly-fetched NAV with TODAY even though the value is the
+    // previous trading day's (verified 2026-08-28: value dated 27-Aug by
+    // Kotak/npsnav, but its 8:47am ENTRY_DATE said 28-Aug). Before the
+    // evening window we trust the value, not the date, so nav_date matches
+    // the true valuation day (like AMFI does for MF).
+    const istHour =
+      parseInt(
+        new Intl.DateTimeFormat("en-GB", {
+          timeZone: "Asia/Kolkata",
+          hour: "2-digit",
+          hour12: false,
+        }).format(new Date()),
+        10
+      ) % 24;
+    if (navDate >= istDate() && istHour < 20) {
+      navDate = previousBusinessDay(istDate());
+    }
 
     // Value-unchanged guard: if the source returned identical NAV values
     // to what we already have (even if the DATE it claims is fresher),

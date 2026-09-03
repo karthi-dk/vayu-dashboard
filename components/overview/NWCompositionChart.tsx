@@ -33,6 +33,7 @@ const MONTHS = [
 //   EPF → warning (amber)    — earthy/golden = "retirement" reads visually
 const COLORS = {
   mf: "hsl(var(--primary))",
+  intl: "hsl(280 65% 70%)",
   nps: "hsl(var(--success))",
   epf: "hsl(var(--warning))",
 } as const;
@@ -86,6 +87,7 @@ function CompositionTooltip({
       <div className="kicker mb-2">{dateLabel}</div>
       <div className="flex flex-col gap-1 text-[11px]">
         <TooltipRow color={COLORS.mf} label="MF" value={p.mf_value} pct={pct(p.mf_value)} />
+        <TooltipRow color={COLORS.intl} label="International" value={p.intl_value} pct={pct(p.intl_value)} />
         <TooltipRow color={COLORS.nps} label="NPS" value={p.nps_value} pct={pct(p.nps_value)} />
         <TooltipRow
           color={COLORS.epf}
@@ -177,6 +179,10 @@ export function NWCompositionChart({ history }: { history: NwPoint[] }) {
                   <stop offset="0%" stopColor={COLORS.mf} stopOpacity={0.75} />
                   <stop offset="100%" stopColor={COLORS.mf} stopOpacity={0.35} />
                 </linearGradient>
+                <linearGradient id="nw-comp-intl" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COLORS.intl} stopOpacity={0.75} />
+                  <stop offset="100%" stopColor={COLORS.intl} stopOpacity={0.35} />
+                </linearGradient>
                 <linearGradient id="nw-comp-nps" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={COLORS.nps} stopOpacity={0.75} />
                   <stop offset="100%" stopColor={COLORS.nps} stopOpacity={0.35} />
@@ -237,6 +243,7 @@ export function NWCompositionChart({ history }: { history: NwPoint[] }) {
                 // bottom→top stack order so it matches the tooltip.
                 payload={[
                   { value: "MF", type: "square", id: "mf", color: COLORS.mf },
+                  { value: "International", type: "square", id: "intl", color: COLORS.intl },
                   { value: "NPS", type: "square", id: "nps", color: COLORS.nps },
                   { value: "EPF", type: "square", id: "epf", color: COLORS.epf },
                 ]}
@@ -262,6 +269,15 @@ export function NWCompositionChart({ history }: { history: NwPoint[] }) {
                 stroke={COLORS.nps}
                 strokeWidth={1.5}
                 fill="url(#nw-comp-nps)"
+              />
+              <Area
+                type="monotone"
+                dataKey="intl_value"
+                name="International"
+                stackId="1"
+                stroke={COLORS.intl}
+                strokeWidth={1.5}
+                fill="url(#nw-comp-intl)"
               />
               <Area
                 type="monotone"

@@ -88,6 +88,16 @@ type IndexBody = {
   error?: string;
 };
 
+// Shape of the /api/refresh-hdfc-intl-nav success payload — per-fund
+// outcomes (rotated / remarked_fx / skipped_stale / failed) + the live
+// USD→INR used for the mark. See app/api/refresh-hdfc-intl-nav/route.ts.
+type IntlBody = {
+  ok: boolean;
+  fx_usd_inr?: number;
+  outcomes?: Array<{ fund_code: string; state: string; error?: string }>;
+  error?: string;
+};
+
 /**
  * Structured summary of one refresh run. Kept as a stateful record
  * (not just a message string) so the tooltip can render a rich
@@ -100,6 +110,9 @@ type RunSummary = {
     | { kind: "ok"; action: string; navDate: string | null }
     | { kind: "error"; reason: string };
   nps:
+    | { kind: "ok"; action: string; navDate: string | null }
+    | { kind: "error"; reason: string };
+  intl:
     | { kind: "ok"; action: string; navDate: string | null }
     | { kind: "error"; reason: string };
   index:
@@ -152,9 +165,10 @@ export function RefreshAllButton() {
       }
     };
 
-    const [mf, nps, index] = await Promise.all([
+    const [mf, nps, intl, index] = await Promise.all([
       parse<MfBody>(fetch("/api/refresh-mf-nav", { method: "POST" })),
       parse<NpsBody>(fetch("/api/refresh-nps-nav", { method: "POST" })),
+      parse<IntlBody>(fetch("/api/refresh-hdfc-intl-nav", { method: "POST" })),
       parse<IndexBody>(fetch("/api/refresh-index-levels", { method: "POST" })),
     ]);
 
@@ -186,13 +200,17 @@ export function RefreshAllButton() {
         }
       : { kind: "error", reason: index.error };
 
-    setSummary({ mf: mfResult, nps: npsResult, index: indexResult, ranAt: Date.now() });
+    const intlResult: RunSummary["intl"] = intl.ok
+      ? { kind: "ok", action: summarizeIntl(intl.body), navDate: null }
+      : { kind: "error", reason: intl.error };
+
+    setSummary({ mf: mfResult, nps: npsResult, intl: intlResult, index: indexResult, ranAt: Date.now() });
 
     // Icon color reflects the worst-branch outcome — error > partial > success.
-    const errorCount = [mfResult, npsResult, indexResult].filter(
+    const errorCount = [mfResult, npsResult, intlResult, indexResult].filter(
       (r) => r.kind === "error"
     ).length;
-    if (errorCount === 3) {
+    if (errorCount === 4) {
       setStatus("error");
     } else if (errorCount > 0) {
       setStatus("partial");
@@ -208,8 +226,13 @@ export function RefreshAllButton() {
       const indexHasPerIndexFailures = index.ok && (index.body.failed ?? 0) > 0;
       const indexAllFailed =
         index.ok && (index.body.failed ?? 0) === (index.body.total ?? 0);
-      if (mfAllFailed || indexAllFailed) setStatus("error");
-      else if (mfHasPerFundFailures || indexHasPerIndexFailures) setStatus("partial");
+      const intlOutcomes = intl.ok ? intl.body.outcomes ?? [] : [];
+      const intlHasFailures = intlOutcomes.some((o) => o.state === "failed");
+      const intlAllFailed =
+        intlOutcomes.length > 0 && intlOutcomes.every((o) => o.state === "failed");
+      if (mfAllFailed || indexAllFailed || intlAllFailed) setStatus("error");
+      else if (mfHasPerFundFailures || indexHasPerIndexFailures || intlHasFailures)
+        setStatus("partial");
       else setStatus("success");
     }
 
@@ -261,7 +284,7 @@ export function RefreshAllButton() {
         aria-label={
           status === "loading"
             ? "Refreshing NAVs"
-            : "Refresh MF and NPS NAVs"
+            : "Refresh MF, NPS, and International NAVs"
         }
         className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-transparent text-muted-foreground transition-colors hover:border-border hover:bg-muted/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
       >
@@ -299,7 +322,7 @@ function TooltipBody({
     return (
       <div className="min-w-[180px] space-y-0.5">
         <div className="font-medium">Refresh NAVs</div>
-        <div className="opacity-70">MF · NPS · Index highs (ATH/52w/3m)</div>
+        <div className="opacity-70">MF · NPS · International · Index highs</div>
       </div>
     );
   }
@@ -308,6 +331,7 @@ function TooltipBody({
     <div className="min-w-[200px] space-y-1.5">
       <SummaryRow label="MF" branch={summary.mf} />
       <SummaryRow label="NPS" branch={summary.nps} />
+      <SummaryRow label="International" branch={summary.intl} />
       <SummaryRow label="Index highs" branch={summary.index} />
     </div>
   );
@@ -398,6 +422,27 @@ function summarizeIndex(body: IndexBody): string {
   if (total === 0) return body.message ?? "Refreshed";
   if (failed === 0) return `${refreshed}/${total} indices refreshed`;
   return `${refreshed}/${total} refreshed · ${failed} failed`;
+}
+
+/**
+ * International (USD GIFT City) refresh — per-fund outcomes (rotated on a
+ * new USD NAV, remarked_fx when only the rupee moved, or failed) plus the
+ * live USD→INR the holdings were marked at.
+ */
+function summarizeIntl(body: IntlBody): string {
+  const outcomes = body.outcomes ?? [];
+  if (outcomes.length === 0) return "No holdings";
+  const rotated = outcomes.filter((o) => o.state === "rotated").length;
+  const remarked = outcomes.filter((o) => o.state === "remarked_fx").length;
+  const failed = outcomes.filter((o) => o.state === "failed").length;
+  const parts: string[] = [];
+  if (rotated > 0) parts.push(`Refreshed ${rotated}`);
+  if (remarked > 0) parts.push(`${remarked} FX re-marked`);
+  if (failed > 0) parts.push(`${failed} failed`);
+  const line = parts.length > 0 ? parts.join(" · ") : "Up to date";
+  return typeof body.fx_usd_inr === "number"
+    ? `${line} · ₹${body.fx_usd_inr.toFixed(2)}/USD`
+    : line;
 }
 
 /**

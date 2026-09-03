@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/Card";
 import { fmtDateShort } from "@/lib/utils";
 import type { IndexLevelRow } from "@/lib/queries";
+import { RefreshIndexLevelsButton } from "./RefreshIndexLevelsButton";
 
 /**
  * Index highs — compact "how far off the peak" strip
@@ -193,19 +194,22 @@ export function IndexHighsCard({ rows }: { rows: IndexLevelRow[] }) {
 
   return (
     <Card className="p-5">
-      <div className="flex items-baseline justify-between gap-2">
+      <div className="flex items-start justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Index highs</h2>
           <p className="mt-0.5 kicker">
-            Today's move · % below 3m / 52w / all-time closing high
+            Today&apos;s move · % below 3m / 52w / all-time closing high
           </p>
         </div>
-        <span
-          className="kicker whitespace-nowrap"
-          title="Auto-refreshes on page load when >60 s stale. Manual refresh from the nav Refresh menu or /sync. Yahoo Finance daily closes."
-        >
-          Updated {updatedLabel}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className="kicker whitespace-nowrap"
+            title="Auto-refreshes on page load when >60 s stale. Click the refresh icon for the latest now. Yahoo Finance daily closes."
+          >
+            Updated {updatedLabel}
+          </span>
+          <RefreshIndexLevelsButton />
+        </div>
       </div>
 
       <div className="mt-3 overflow-x-auto">

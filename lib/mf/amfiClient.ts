@@ -275,18 +275,23 @@ export async function fetchAmfiSnapshot(): Promise<Map<string, AmfiLatestNav>> {
     if (!/^\d+;/.test(raw)) continue;
 
     const parts = raw.split(";");
-    if (parts.length !== 6) continue;
+    // AMFI now emits Plan and Option as their own semicolon fields
+    // (8 cols: code;isin;isin;name;plan;option;nav;date); older files
+    // used 6 (…;name;nav;date). NAV and date are always the LAST two
+    // columns, so index from the end — a fixed parts[4]/[5] read silently
+    // parsed 0 rows on the new format and forced the (day-lagging) mfapi
+    // fallback. Require ≥6 cols so header/category lines still skip.
+    if (parts.length < 6) continue;
 
-    // Index-based extraction rather than array destructuring so the
-    // ISIN-Div-Reinvest column (parts[2]) is skipped without needing
-    // an unused-var suppression. We reconcile against Groww via the
-    // growth-plan ISIN in parts[1]; the div-reinvest ISIN isn't
-    // stored anywhere in this app.
     const schemeCode = parts[0].trim();
     const isinGrowth = parts[1].trim();
-    const schemeName = parts[3].trim();
-    const navStr = parts[4].trim();
-    const dateStr = parts[5].trim();
+    const dateStr = parts[parts.length - 1].trim();
+    const navStr = parts[parts.length - 2].trim();
+    const schemeName = parts
+      .slice(3, parts.length - 2)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join(" ");
 
     if (!schemeCode || !schemeName || !navStr || !dateStr) continue;
 

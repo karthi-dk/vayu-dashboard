@@ -1,12 +1,12 @@
 # Handover — current context for the next agent
 
-**Latest app release:** `0.2.0` (2026-07-29) — see **[CHANGELOG.md](./CHANGELOG.md)**  
-**Production:** https://foliopulse.vercel.app  
+**Latest app release:** `0.3.0` (2026-09-03) — see **[CHANGELOG.md](./CHANGELOG.md)**  
+**Production:** https://foliopulse.vercel.app · **Vercel project:** https://vercel.com/kdeekay/foliopulse  
 **Ship path:** push `main` → Vercel production (Git integration)
 
 ---
 
-## TL;DR — unreleased (Overview data accuracy)
+## TL;DR — 0.3.0 (Overview data accuracy)
 
 Since 0.2.0, three data-accuracy features landed on the Overview page.
 All reconciled against source; **no DB migration** (the one-time
@@ -39,13 +39,94 @@ to the shared Supabase, already live). Build is green; `CHANGELOG.md`
    (`range=5d&interval=1h`) and feeds it into BOTH the "Today %" and the
    ATH/52W/3M peak columns — previously "Today" could span multiple
    sessions (even wrong sign) and a dropped record day made an index
-   read 0.0% ("at its high") when it was actually below.
-
+   read 0.0% ("at its high") when it was actually below.4. **NAV source hardening (MF + NPS)** — two *silent* data-staleness bugs
+   found + fixed (both matter operationally):
+   - **AMFI `NAVAll.txt` parser** (`lib/mf/amfiClient.ts`) — AMFI moved from
+     6 to 8 `;`-columns; the parser required exactly 6 → parsed **0 rows**
+     → silently fell back to day-lagging mfapi.in, leaving every MF NAV (and
+     1D) a day stale with no visible signal. Now reads NAV/date from the
+     **end** of the row (handles both layouts).
+   - **NPS `nav_date`** (`app/api/refresh-nps-nav/route.ts` +
+     `lib/istDate.ts` `previousBusinessDay`) — Kotak's morning `ENTRY_DATE`
+     stamps a fresh NAV with *today* though it's the prior trading day's;
+     the route now rolls a today-stamped NAV back to the previous business
+     day when fetched before the ~8pm IST evening declaration. One-time data
+     correction (`nps_state` + `nps_nav_history` 28-Aug→27-Aug) written to
+     the shared DB.
+   - **Visibility** (`components/nav/TopNav.tsx`) — the NAVs freshness chip
+     now flags absolute age (amber when the batch trails today) and a
+     `nav_source='mfapi'` fallback, so a future AMFI outage isn't silent.
+5. **Period-returns grids** — `NwDeltasCards` (net-worth) + `MfDeltasCard`
+   (MF-only, below MF Growth Breakdown), both driven by `computeNwDeltas`
+   over `nwHistory` / `mfHistory`. `mfDeltas` added to `getOverviewData`.
+   MF shows fewer windows until its history ages past 1Y/3Y/5Y.
+6. **Stat-card gains** — MF/NPS/EPF cards show the ₹ gain beside the %; EPF
+   gained a contributed-vs-interest line; the 1D chip shows the NAV “as of”
+   date + `(N stale)`.
 **Local diagnostics gotchas:** Node scripts hitting Supabase need the
 `NODE_TLS_REJECT_UNAUTHORIZED=0` prefix (corporate self-signed proxy).
 `tsx` is NOT installed and `npx tsx` tries to install over that proxy —
 verify pure-TS logic with a self-contained plain-`node` `.mjs` copy
 instead. See `/memories/repo/build-notes.md` for the full play-by-play.
+
+---
+
+## TL;DR — 0.3.0 (International asset class + foreign look-through)
+
+Landed 2026-09-02 (all local; push from the Windows clone). A new
+top-level **International** asset class + a foreign look-through suite on
+Portfolio. **Requires DB migrations + a backfill (see below).** Build
+green (17/17).
+
+- **Model:** a single `asset_class` column (`'mf' | 'intl'`) on
+  `fund_holdings` — not a separate table; everything groups by it. ICICI
+  Nasdaq flipped to `intl`; the new **HDFC GIFT City DM USD fund** seeded
+  as `intl`. `recomputeNwDaily` splits mf vs intl, so `nw_daily.mf_value`
+  now **excludes** intl and `total_nw = mf + nps + epf + intl`.
+- **USER MUST RUN (shared prod DB):** apply
+  `migrations/2026-09-02-international-asset-class.sql`,
+  `migrations/2026-09-02-master-country-region.sql`, and
+  `migrations/2026-09-02-fx-rates.sql`, then after a NAV
+  refresh run `scripts/backfill-intl-reclassification.mjs` (dry-run,
+  then `--apply`) to reclassify ICICI in historical `nw_daily`. The
+  backfill reconstructs ICICI **units-at-date from the transaction
+  ledger** (SIP units change over time) and is idempotent.
+- **HDFC intl NAV:** `lib/mf/hdfcIntlClient.ts` (reverse-engineered GIFT
+  City API — its `plan_type` param carries the *class*; “Class A” = the
+  Direct plan), `lib/fx.ts` (live + historical USD→INR),
+  `app/api/refresh-hdfc-intl-nav/route.ts` (marks at gross redemption
+  NAV × live FX; “exit today” from the short-term redemption NAV).
+- **Per-fund NAV-vs-FX chart** (`components/overview/IntlFundGrowthChart.tsx`
+  + `app/api/intl-nav-series/route.ts`): stacked contribution area where
+  Fund (USD NAV) + FX bands sum to the Total INR return, for the HDFC USD
+  fund. FX comes from the new **`fx_rates` store** (`lib/fxStore.ts`, table
+  from `2026-09-02-fx-rates.sql`) — each intl refresh persists that day's
+  open.er-api rate so the chart matches the card's source; Yahoo `USDINR=X`
+  is a fallback only for dates predating the store (open.er-api has no
+  history endpoint). Both degrade gracefully if `fx_rates` isn't migrated.
+- **HDFC DM look-through:** its underlying (iShares Core MSCI World,
+  ~1,251 names) is ingested via a **paste card** on Sync
+  (`app/api/ingest-intl-holdings`, `lib/intl/isharesHoldings.ts`) — the
+  iShares holdings API is Akamai bot-gated, so it’s pasted from a live
+  browser session. Added `country` + widened the `region` CHECK on
+  `master_security_classification`.
+- **Foreign look-through suite (Portfolio):** Foreign look-through card,
+  Country composition, and **Foreign sector exposure** (GICS, % of
+  foreign) — all fed by `foreignLookthrough` in `getPortfolioData` (every
+  holding tagged region US/International, merged by company).
+- **Sector exposure is now Indian-equity-only:** the NSE card AND its
+  drill-down exclude the intl asset class + domestic funds’ foreign
+  slices (`isForeignMaster`); the tile now reconciles exactly with its
+  drill-down (they are **two separate aggregations** — keep both in sync).
+- **Watch out:** the `intl` split has MANY downstream consumers — every
+  `mf_value / nps_value / epf_estimate` rollup, every `{mf,nps,epf}`
+  slice UI, and `buildNwHistory`. Full play-by-play in
+  `/memories/repo/build-notes.md`.
+- **2026-09-03 follow-ups:** the USD mark + per-fund chart now use the
+  **Purchase NAV** (matches cost basis; “exit today” = short-term redemption);
+  `scripts/backfill-hdfc-nw.mjs` folded HDFC into `nw_daily` from its 27 Aug
+  allotment (already applied — prod = local shared DB); and the International
+  “stale” flag is now lag-aware, so HDFC's ~T+2 UCITS lag no longer false-alarms.
 
 ---
 

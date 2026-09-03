@@ -5,6 +5,7 @@ Every push to `main` triggers a Vercel production build. Preview deploys
 run on other branches / PRs when enabled.
 
 **Live URL:** [https://foliopulse.vercel.app](https://foliopulse.vercel.app)  
+**Vercel project:** [vercel.com/kdeekay/foliopulse](https://vercel.com/kdeekay/foliopulse)  
 **Release notes:** [CHANGELOG.md](./CHANGELOG.md) (update on every ship)
 
 ## 0. Pre-flight

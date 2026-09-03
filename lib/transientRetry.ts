@@ -35,14 +35,19 @@ function wait(ms: number): Promise<void> {
 /**
  * Run `fn`, retrying ONLY on the transient JWT-future clock-skew error —
  * any other error is thrown immediately (no point masking a real failure).
- * Backoff defaults to 250ms → 750ms → 1.5s → 3s (~5.5s of real-time
- * headroom for a post-wake NTP re-sync). This cost is ONLY ever incurred
- * on the skew path — every other error throws on the first attempt — and
- * the happy path returns immediately.
+ * Backoff defaults to 250ms → 750ms → 1.5s → 3s → 5s → 8s (~18.5s of
+ * real-time headroom). Widened from the original ~5.5s after a production
+ * `/sync` render was caught exhausting the shorter budget (7.24s execution,
+ * still PGRST303 "JWT issued at future"): on Vercel that skew window — the
+ * static service token's `iat` sitting slightly ahead of PostgREST's clock
+ * — can outlast 5.5s, and each extra attempt simply waits for wall-clock to
+ * cross the `iat` threshold. This cost is ONLY ever incurred on the skew
+ * path — every other error throws on the first attempt — and the happy
+ * path returns immediately.
  */
 export async function withTransientRetry<T>(
   fn: () => Promise<T>,
-  backoffMs: number[] = [250, 750, 1500, 3000]
+  backoffMs: number[] = [250, 750, 1500, 3000, 5000, 8000]
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {

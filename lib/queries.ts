@@ -116,6 +116,13 @@ export type NwRow = {
   mf_1d_change_pct: number | null;
   nps_1d_change_inr: number | null;
   nps_1d_change_pct: number | null;
+  // International slice (asset_class='intl'). Populated by recomputeNwDaily
+  // from 2026-09-02 onwards; NULL on legacy rows (treat as "skip point").
+  intl_value: number | null;
+  intl_invested: number | null;
+  intl_gain_pct: number | null;
+  intl_1d_change_inr: number | null;
+  intl_1d_change_pct: number | null;
   created_at?: string;
   /**
    * Cumulative net MF deposits (purchases − redemptions) as of this
@@ -243,6 +250,7 @@ export type Fund = {
   current_value_inr: number;
   invested_inr: number;
   cap_type: CapType;
+  asset_class?: string | null;
   nav: number | null;
   nav_date: string | null;
   units: number | null;
@@ -310,23 +318,47 @@ export type SectorSlice = { name: string; pct: number; companies: number; tier: 
 
 // ─── Time-series analytics for the Overview page ─────────────────────────
 
-export type PeriodKey = "1D" | "1W" | "1M" | "3M" | "YTD" | "1Y" | "ALL";
+export type PeriodKey =
+  | "1D"
+  | "1W"
+  | "1M"
+  | "3M"
+  | "6M"
+  | "YTD"
+  | "1Y"
+  | "3Y"
+  | "5Y"
+  | "ALL";
 
 /**
- * A single Net Worth delta over a time window. Periods with no historical
- * anchor point (e.g., "1Y" when we only have 2 months of data) are simply
- * omitted from the results array — the UI iterates and skips.
+ * A single Net Worth delta over a time window, computed off the
+ * reconstructed multi-year `nwHistory` (so windows reach back to the
+ * first contribution). Each window's net change is split into the money
+ * you ADDED (Δ cumulative contributions) vs market GROWTH (the rest),
+ * plus a return % — so a long window that's mostly deposits doesn't
+ * masquerade as a huge return. Periods with no anchor that far back are
+ * omitted.
  *
  * daysActual vs daysBack: the target lookback (e.g., 30 for 1M) may not
  * land exactly on a stored row (weekends, missed crons). We snap to the
  * most recent row on/before the target date, and expose the true days
- * covered so the tooltip can say "since 15 JUN (33 days ago)" instead of
- * pretending we hit exactly 30.
+ * covered so the tooltip can say "since 15 JUN (33 days ago)".
  */
 export type NwDelta = {
   period: PeriodKey;
+  /** Net change in total net worth over the window (₹). */
   deltaInr: number;
-  deltaPct: number;
+  /** Money you added over the window = Δ cumulative contributions (₹). */
+  depositsInr: number;
+  /** Market growth = deltaInr − depositsInr (₹). */
+  growthInr: number;
+  /**
+   * Return = growth ÷ capital deployed (starting balance + deposits),
+   * ×100. Not annualised. Defined for every window including ALL (whose
+   * anchor is the ₹0 inception point → growth ÷ lifetime contributions).
+   * Null only if no capital was deployed.
+   */
+  returnPct: number | null;
   refDate: string;
   daysActual: number;
 };
@@ -342,13 +374,14 @@ export type NwDelta = {
  * ignored — corpus stays classified as locked.
  */
 export type LiquiditySplit = {
-  liquid: number;      // = mf_value
+  liquid: number;      // = mf_value + intl_value
   locked: number;      // = nps_value + epf_estimate
   total: number;
   liquidPct: number;
   lockedPct: number;
   breakdown: {
     mf: number;
+    intl: number;
     nps: number;
     epf: number;
   };
@@ -379,8 +412,9 @@ export type AssetSplit = {
   equityPct: number;
   debtPct: number;
   breakdown: {
-    mfEquity: number;           // Σ cap_type ∈ {large,mid,small,intl}
+    mfEquity: number;           // Σ MF cap_type ∈ {large,mid,small}
     mfDebt: number;             // Σ cap_type = 'debt'
+    intlEquity: number;         // International asset class (Nasdaq + MSCI World) — 100% equity
     npsEquity: number;          // nps_value × alloc_e_pct
     npsDebt: number;            // nps_value × (alloc_c_pct + alloc_g_pct)
     epfDebt: number;            // epf_estimate (100% debt-like)
@@ -456,6 +490,7 @@ export type CompositionBucket = {
 export type WealthComposition = {
   nw: CompositionBucket;
   mf: CompositionBucket;
+  intl?: CompositionBucket;
   nps: CompositionBucket;
   epf: CompositionBucket;
 };
@@ -528,6 +563,73 @@ export type NpsDailyRow = {
   is_reconstructed: boolean;
 };
 
+/**
+ * Per-scheme (E/C/G) NPS Tier-I breakdown row — current value, the money
+ * that went into that scheme, its share of the NPS corpus, and a
+ * per-scheme money-weighted return (XIRR).
+ *
+ * `invested` is the NET cost basis currently sitting in the scheme:
+ * contributions allotted to it PLUS inter-scheme switch/shift value moved
+ * IN, MINUS value switched OUT (all from `nps_transactions.amount`, which
+ * is signed from the corpus's perspective). Billing fees are excluded —
+ * they're a drag already reflected in the reduced unit balance / value.
+ * Summing `invested` across E+C+G reconciles to total NPS invested because
+ * switches net to zero across schemes.
+ */
+export type NpsSchemeBreakdownRow = {
+  scheme: "E" | "C" | "G";
+  label: string;
+  units: number;
+  nav: number;
+  value: number;
+  invested: number;
+  splitPct: number;
+  gainPct: number | null;
+  xirr: number | null;
+};
+
+/**
+ * Per-holding International detail. INR-native funds (ICICI Nasdaq) leave
+ * the USD fields null; USD-native funds (HDFC GIFT City) carry the USD-NAV
+ * vs FX return split and the "exit today" liquidation value.
+ */
+export type IntlFundDetail = {
+  fundCode: string;
+  fundName: string;
+  currency: string; // "INR" | "USD"
+  valueInr: number;
+  investedInr: number;
+  gainPct: number;
+  oneDayInr: number | null;
+  navDate: string | null;
+  // USD-native funds only (null otherwise):
+  navUsd: number | null;
+  usdReturnPct: number | null; // fund performance in USD, vs USD cost basis
+  fxRate: number | null; // USD→INR used for the mark
+  fxReturnPct: number | null; // rupee move vs the purchase rate
+  exitTodayInr: number | null; // redemption-short (exit load applied) × units × fx
+};
+
+/** Rolled-up International asset class (peer of MF / NPS / EPF). */
+export type InternationalSummary = {
+  value: number;
+  invested: number;
+  gainPct: number;
+  oneDayInr: number | null;
+  oneDayPct: number | null;
+  navDate: string | null;
+  navStaleCount: number;
+  funds: IntlFundDetail[];
+};
+
+/** One day on the International daily curve (reconstructed + observed). */
+export type IntlDailyRow = {
+  date: string;
+  intl_value: number;
+  intl_invested: number;
+  is_reconstructed: boolean;
+};
+
 export type OverviewData = {
   latest: NwRow | null;
   prev: NwRow | null;
@@ -558,6 +660,12 @@ export type OverviewData = {
    */
   npsXirr: number | null;
   /**
+   * Per-scheme (E/C/G) NPS Tier-I breakdown — current value, net invested
+   * cost basis, corpus share, and per-scheme XIRR. Empty array when
+   * nps_state is null. See computeNpsSchemeBreakdown.
+   */
+  npsSchemeBreakdown: NpsSchemeBreakdownRow[];
+  /**
    * EPF-only reconstructed series (cumulative contributions + interest
    * over time), built from the EPFO passbook history module
    * (lib/epf/epfHistory.ts). Powers the EPF Growth breakdown chart and
@@ -575,10 +683,27 @@ export type OverviewData = {
   nps: NpsState | null;
   epf: EpfState | null;
   fundCount: number;
+  /**
+   * Headline MF NAV date (most common `nav_date` across funds) — the
+   * "as of" day the MF value and its 1D change reflect. MF NAVs publish
+   * T+1, so this typically lags the calendar day by one. Null when no
+   * fund carries a nav_date yet.
+   */
+  mfNavDate: string | null;
+  /**
+   * Count of funds whose nav_date lags `mfNavDate` (usually FoF /
+   * international funds that publish T+2). Surfaced as a small
+   * "(N stale)" hint next to the MF card's NAV date.
+   */
+  mfStaleCount: number;
   lastSync: string | null;
   config: ConfigMap;
   assetSplit: AssetSplit | null;
   nwDeltas: NwDelta[];               // Multi-period NW change chips
+  mfDeltas: NwDelta[];               // Same grid, MF-only (from mfHistory)
+  intlDeltas: NwDelta[];             // Same grid, International-only (from nw_daily.intl_value)
+  international: InternationalSummary | null; // Rolled-up International asset class
+  intlHistory: IntlDailyRow[];       // International daily curve (reconstructed + observed) for the sparkline
   liquiditySplit: LiquiditySplit | null;
   // NW attribution is now computed range-aware, client-side, by
   // NWTrendChart's SummaryStrip from `credits` + slice of `history`.
@@ -740,6 +865,20 @@ export type PortfolioHeadline = {
   oneDayInr: number | null;
   oneDayPct: number | null;
   fundCount: number;
+  // International — separate asset class, surfaced beside MF. Optional so
+  // the type stays backward-compatible when there are no intl holdings.
+  intlValue?: number;
+  intlInvested?: number;
+  intlGainInr?: number;
+  intlGainPct?: number;
+  intlFundCount?: number;
+  // Combined MF + International — the "Total gain" / "1D" chips use these
+  // so the headline reconciles with both value heroes shown.
+  totalInvested?: number;
+  totalGainInr?: number;
+  totalGainPct?: number;
+  totalOneDayInr?: number | null;
+  totalOneDayPct?: number | null;
 };
 
 /**
@@ -787,6 +926,53 @@ export type SectorConcentration = {
   severity: SectorSeverity;
 };
 
+export type ForeignHeldVia = {
+  fund_code: string;
+  fund_name: string;
+  inr: number;
+};
+
+/** One foreign company, aggregated across every fund that holds it. */
+export type ForeignHolding = {
+  name: string;
+  sector: string | null;
+  country: string;
+  effective_inr: number;
+  pct_of_foreign: number;
+  held_via: ForeignHeldVia[];
+};
+
+/** One country's slice of the foreign book, carrying its top-100 holdings. */
+export type ForeignCountry = {
+  country: string;
+  effective_inr: number;
+  pct_of_foreign: number;
+  n_companies: number;
+  stocks: ForeignHolding[];
+};
+
+/** One GICS sector's slice of the foreign book, carrying its top-100 holdings. */
+export type ForeignSector = {
+  sector: string;
+  effective_inr: number;
+  pct_of_foreign: number;
+  n_companies: number;
+  stocks: ForeignHolding[];
+};
+
+/** Cross-fund foreign look-through (ICICI + HDFC + domestic US slices). */
+export type ForeignLookthrough = {
+  total_inr: number;
+  /** Full count of distinct foreign companies (stocks is capped to top 100). */
+  total_companies: number;
+  by_fund: ForeignHeldVia[];
+  stocks: ForeignHolding[];
+  /** Country composition, ranked by weight; each carries its top-100 holdings. */
+  countries: ForeignCountry[];
+  /** GICS sector composition, ranked by weight; each carries its top-100 holdings. */
+  sectors: ForeignSector[];
+};
+
 export type PortfolioData = {
   funds: Fund[];
   topHoldingsByFund: Record<string, FundHoldingDetail[]>;
@@ -808,23 +994,20 @@ export type PortfolioData = {
    * Indian equity total (which is `mfComposition.indian_equity`, NOT
    * mfTotal). Look-through, per-stock, using the classification
    * convention:
-   *   • master.source = nse-nifty50      → 100% Large
-   *   • master.source = nse-niftynext50  → 100% Large  (see NN50 note)
+   *   • master.source = nse-nifty50      → Nifty 50 (N50)
+   *   • master.source = nse-niftynext50  → Nifty Next 50 (NN50)
    *   • master.mcap_classification = Mid → 100% Mid
    *   • Small / Micro / Nano             → 100% Small
    *
-   * NN50 convention (2026-07-27): NN50 stocks count as 100% Large in
-   * the look-through split. Previously we applied a 75:25 (large:mid)
-   * blend that mirrored one SEBI reading, but the user's operational
-   * view now treats the entire Nifty Next 50 tier as large cap for
-   * portfolio-cap analysis. The sub-bucket tagging (LargeN50 vs
-   * LargeNN50 in the classification card) is preserved so counts and
-   * drill-downs still distinguish the two tiers — only the weighting
-   * in the look-through totals changed.
+   * The Large tier is split into its two NSE sub-indices — Nifty 50
+   * and Nifty Next 50 — as separate slices (via the master `source`
+   * tag) rather than a single "Large" bucket, so the donut shows the
+   * mega-cap vs rank-51–100 mix directly. Any Large row without a
+   * recognized sub-index source (manual override) defaults to N50.
    */
   indianEquityCapSplit: AllocationSlice[];
   /**
-   * Sum of Large + Mid + Small buckets, in ₹. Used as the donut
+   * Sum of N50 + NN50 + Mid + Small buckets, in ₹. Used as the donut
    * center total for the `indianEquityCapSplit` view (denominator
    * for the % labels). Kept separately so consumers don't have to
    * re-sum the slice array.
@@ -862,6 +1045,20 @@ export type PortfolioData = {
    * appears in exactly one bucket here.
    */
   stocksBySector: Record<string, LookthroughStock[]>;
+  /**
+   * International holdings (ICICI Nasdaq + HDFC GIFT City) — a separate
+   * asset class shown in its own compact strip, not the MF table.
+   */
+  intlFunds: Fund[];
+  /** Sum of intlFunds current value — denominator for "% of Intl". */
+  intlTotal: number;
+  /**
+   * Cross-fund foreign look-through: every fund's foreign equity merged
+   * by company (ICICI + HDFC + domestic funds' US slices), with effective
+   * ₹ and a per-fund split. Its own lens — separate from the India-centric
+   * look-through so US names don't muddy the MF sector/top-stocks views.
+   */
+  foreignLookthrough: ForeignLookthrough;
 };
 
 export type FundResyncStatus = {
@@ -873,7 +1070,10 @@ export type FundResyncStatus = {
   coverage_pct: number;                // security + non-security (total)
   security_coverage_pct: number;       // fund_holdings_detail only
   nonsec_coverage_pct: number;         // fund_non_security_holdings only
-  state: "idle" | "syncing" | "error";
+  currency: string | null;             // 'USD' = foreign fund (Dhan can't resync)
+  // "na" = look-through not applicable (foreign funds with no Dhan
+  // disclosure); rendered as a calm tag, not a low-coverage warning.
+  state: "idle" | "syncing" | "error" | "na";
   unresolved_isins?: string[];
   detail_rows: number;                 // fund_holdings_detail rows
   nonsec_rows: number;                 // fund_non_security_holdings rows
@@ -881,6 +1081,32 @@ export type FundResyncStatus = {
   unresolved_count: number;            // # holdings Dhan returned that we couldn't classify
   unresolved_weight_pct: number;       // total weight of unresolved holdings
   unknown_types_count: number;         // # holdings with unknown holding_type code
+};
+
+/**
+ * NAV-panel summary for a RefreshNavsCard mini-panel (MF and, since the
+ * International asset class landed, Intl). Headline nav_date is the most-
+ * common date across the rows (tiebreak: most recent); stale_funds are
+ * the rows lagging it.
+ */
+export type NavPanelSummary = {
+  nav_date: string | null;
+  nav_updated_at: string | null;
+  nav_source: MfNavSource | null;
+  total_value_inr: number;
+  fund_count: number;
+  stale_fund_count: number;
+  stale_funds: Array<{
+    fund_code: string;
+    fund_name: string;
+    nav_date: string | null;
+  }>;
+  fresh_funds: Array<{
+    fund_code: string;
+    fund_name: string;
+    nav_date: string | null;
+  }>;
+  has_prev: boolean;
 };
 
 export type SyncData = {
@@ -911,25 +1137,14 @@ export type SyncData = {
    *     used to gate the "1D delta available after next refresh"
    *     first-run hint.
    */
-  mf: {
-    nav_date: string | null;
-    nav_updated_at: string | null;
-    nav_source: MfNavSource | null;
-    total_value_inr: number;
-    fund_count: number;
-    stale_fund_count: number;
-    stale_funds: Array<{
-      fund_code: string;
-      fund_name: string;
-      nav_date: string | null;
-    }>;
-    fresh_funds: Array<{
-      fund_code: string;
-      fund_name: string;
-      nav_date: string | null;
-    }>;
-    has_prev: boolean;
-  } | null;
+  mf: NavPanelSummary | null;
+  /**
+   * International NAV summary (ICICI Nasdaq + HDFC GIFT City) — powers
+   * the "International" mini-panel in RefreshNavsCard. Same shape as
+   * `mf`; scoped to asset_class='intl' so HDFC (which the AMFI refresh
+   * can't touch) stops showing up as a stale mutual fund.
+   */
+  intl: NavPanelSummary | null;
   nps: {
     nav_date: string | null;
     nav_updated_at: string | null;
@@ -1252,11 +1467,16 @@ async function fetchConfigMap(): Promise<ConfigMap> {
  * `targetTimestamp`. History is expected to be sorted ascending by date.
  * Returns null when no row qualifies (e.g., target predates our data).
  */
+/** Minimal row shape the NW-delta helpers read — satisfied by the
+ *  reconstructed `NwPoint` (needs cumulative contributions for the
+ *  deposits-vs-growth split). */
+type NwDeltaRow = { date: string; total_nw: number; total_contribution: number };
+
 function findRowOnOrBefore(
-  history: NwRow[],
+  history: NwDeltaRow[],
   targetTimestamp: number
-): NwRow | null {
-  let best: NwRow | null = null;
+): NwDeltaRow | null {
+  let best: NwDeltaRow | null = null;
   for (const row of history) {
     const t = new Date(row.date).getTime();
     if (t > targetTimestamp) break;
@@ -1271,7 +1491,7 @@ function findRowOnOrBefore(
  * transparent about "since we started" instead of pretending we have
  * Jan 1 data).
  */
-function findYtdAnchor(history: NwRow[]): NwRow | null {
+function findYtdAnchor(history: NwDeltaRow[]): NwDeltaRow | null {
   if (history.length === 0) return null;
   const latestYear = new Date(history[history.length - 1].date).getUTCFullYear();
   for (const row of history) {
@@ -1280,38 +1500,54 @@ function findYtdAnchor(history: NwRow[]): NwRow | null {
   return history[0];
 }
 
-function computeNwDeltas(history: NwRow[]): NwDelta[] {
+function computeNwDeltas(history: NwDeltaRow[]): NwDelta[] {
   if (history.length < 2) return [];
   const latest = history[history.length - 1];
   const latestTs = new Date(latest.date).getTime();
-  const results: NwDelta[] = [];
   const DAY_MS = 86400000;
 
-  // Fixed-window periods. Order matches the visual order of chips.
+  // Build one delta from an anchor row: net change split into the money
+  // you ADDED (Δ cumulative contributions) vs market GROWTH (the rest),
+  // plus a return % = growth ÷ capital deployed (starting balance +
+  // deposits). The deployed denominator stays defined even for ALL,
+  // whose anchor is the ₹0 inception point (→ growth ÷ lifetime deposits).
+  const makeDelta = (period: PeriodKey, ref: NwDeltaRow): NwDelta => {
+    const deltaInr = latest.total_nw - ref.total_nw;
+    const depositsInr = latest.total_contribution - ref.total_contribution;
+    const growthInr = deltaInr - depositsInr;
+    const deployed = ref.total_nw + depositsInr;
+    return {
+      period,
+      deltaInr,
+      depositsInr,
+      growthInr,
+      returnPct: deployed > 0 ? (growthInr / deployed) * 100 : null,
+      refDate: ref.date,
+      daysActual: Math.round((latestTs - new Date(ref.date).getTime()) / DAY_MS),
+    };
+  };
+
+  const results: NwDelta[] = [];
+
   const windows: { key: PeriodKey; daysBack: number }[] = [
     { key: "1D", daysBack: 1 },
     { key: "1W", daysBack: 7 },
     { key: "1M", daysBack: 30 },
     { key: "3M", daysBack: 90 },
+    { key: "6M", daysBack: 180 },
     { key: "1Y", daysBack: 365 },
+    { key: "3Y", daysBack: 1095 },
+    { key: "5Y", daysBack: 1825 },
   ];
-
   for (const { key, daysBack } of windows) {
     const ref = findRowOnOrBefore(history, latestTs - daysBack * DAY_MS);
     if (!ref || ref.date === latest.date) continue;
-    const deltaInr = latest.total_nw - ref.total_nw;
-    const deltaPct = ref.total_nw > 0 ? (deltaInr / ref.total_nw) * 100 : 0;
-    const daysActual = Math.round((latestTs - new Date(ref.date).getTime()) / DAY_MS);
-    results.push({ period: key, deltaInr, deltaPct, refDate: ref.date, daysActual });
+    results.push(makeDelta(key, ref));
   }
 
-  // YTD — insert before "ALL" to keep temporal ordering.
-  //
-  // Strict definition: YTD is a financial term of art meaning "from Jan 1
-  // of the current year". We only render the chip when the anchor row is
-  // actually in January (or earlier — a Dec-31-prior-year row counts as a
-  // near-Jan-1 baseline). If someone started tracking mid-year, YTD stays
-  // hidden and the ALL chip covers the same information honestly.
+  // YTD — from Jan 1 of the current year (or a Dec-31-prior baseline).
+  // Only emitted when the anchor is genuinely in January / a prior year,
+  // so a mid-year start doesn't mislabel "since we started" as YTD.
   const ytdRef = findYtdAnchor(history);
   if (ytdRef && ytdRef.date !== latest.date) {
     const anchorDate = new Date(ytdRef.date);
@@ -1321,43 +1557,25 @@ function computeNwDeltas(history: NwRow[]): NwDelta[] {
     const isTrueYtd =
       anchorYear < latestYear ||
       (anchorYear === latestYear && anchorMonth === 0);
-    if (isTrueYtd) {
-      const deltaInr = latest.total_nw - ytdRef.total_nw;
-      const deltaPct = ytdRef.total_nw > 0 ? (deltaInr / ytdRef.total_nw) * 100 : 0;
-      const daysActual = Math.round((latestTs - new Date(ytdRef.date).getTime()) / DAY_MS);
-      results.push({ period: "YTD", deltaInr, deltaPct, refDate: ytdRef.date, daysActual });
-    }
+    if (isTrueYtd) results.push(makeDelta("YTD", ytdRef));
   }
 
-  // ALL — first row we have. Suppressed when the anchor row would be
-  // identical to another chip's anchor:
-  //   • matches 1Y anchor → we already have a year of history, "ALL"
-  //     wouldn't add information
-  //   • matches YTD anchor → common on fresh installs where the earliest
-  //     row is inside the current year, so YTD covers the same ground
-  //
-  // Once history spans multiple years, YTD (this year only) and ALL
-  // (everything) diverge naturally and both chips will render.
+  // ALL — from the ₹0 inception point. No longer redundant with the
+  // headline: the deposits-vs-growth split makes it the "lifetime" row
+  // (₹ contributed + ₹ grown = today's net worth).
   const first = history[0];
-  if (first.date !== latest.date) {
-    const daysActual = Math.round((latestTs - new Date(first.date).getTime()) / DAY_MS);
-    const has1Y = results.find((r) => r.period === "1Y");
-    const hasYtd = results.find((r) => r.period === "YTD");
-    const collidesWith1Y = has1Y && Math.abs(has1Y.daysActual - daysActual) <= 30;
-    const collidesWithYtd = hasYtd && hasYtd.refDate === first.date;
-    if (!collidesWith1Y && !collidesWithYtd) {
-      const deltaInr = latest.total_nw - first.total_nw;
-      const deltaPct = first.total_nw > 0 ? (deltaInr / first.total_nw) * 100 : 0;
-      results.push({ period: "ALL", deltaInr, deltaPct, refDate: first.date, daysActual });
-    }
-  }
+  if (first.date !== latest.date) results.push(makeDelta("ALL", first));
 
+  // Temporal order (shortest window → longest).
+  results.sort((a, b) => a.daysActual - b.daysActual);
   return results;
 }
 
 function computeLiquiditySplit(latest: NwRow | null): LiquiditySplit | null {
   if (!latest) return null;
-  const liquid = latest.mf_value;
+  // International funds are open-ended / redeemable → liquid, like MF.
+  const intlValue = latest.intl_value ?? 0;
+  const liquid = latest.mf_value + intlValue;
   const locked = latest.nps_value + latest.epf_estimate;
   const total = liquid + locked;
   if (total <= 0) return null;
@@ -1369,6 +1587,7 @@ function computeLiquiditySplit(latest: NwRow | null): LiquiditySplit | null {
     lockedPct: (locked / total) * 100,
     breakdown: {
       mf: latest.mf_value,
+      intl: intlValue,
       nps: latest.nps_value,
       epf: latest.epf_estimate,
     },
@@ -1453,6 +1672,7 @@ function computeWealthComposition(input: {
   nps: NpsState | null;
   epf: EpfState | null;
   funds: Array<{ current_value_inr: number | null; invested_inr: number | null }>;
+  intl?: { current: number; invested: number } | null;
 }): WealthComposition | null {
   // Bail if we don't have enough data to render anything meaningful.
   // Fresh install with no funds / no EPF seed → return null; the UI
@@ -1518,8 +1738,26 @@ function computeWealthComposition(input: {
   // from fund_holdings.invested_inr, NPS from total_invested_inr, EPF
   // from the passbook history), so the NW rollup is no longer flagged
   // estimated.
-  const nwContrib = mf.contributionsInr + nps.contributionsInr + epf.contributionsInr;
-  const nwCurrent = mf.currentInr + nps.currentInr + epf.currentInr;
+  // ── International bucket (ICICI Nasdaq + HDFC GIFT City) ──
+  const intlBucket = input.intl
+    ? buildCompositionBucket({
+        label: "International",
+        currentInr: input.intl.current,
+        contributionsInr: input.intl.invested,
+        estimated: false,
+      })
+    : null;
+
+  const nwContrib =
+    mf.contributionsInr +
+    nps.contributionsInr +
+    epf.contributionsInr +
+    (intlBucket?.contributionsInr ?? 0);
+  const nwCurrent =
+    mf.currentInr +
+    nps.currentInr +
+    epf.currentInr +
+    (intlBucket?.currentInr ?? 0);
   const nwBucket = buildCompositionBucket({
     label: "Total Net Worth",
     currentInr: nwCurrent,
@@ -1527,7 +1765,7 @@ function computeWealthComposition(input: {
     estimated: epf.estimated,
   });
 
-  return { nw: nwBucket, mf, nps, epf };
+  return { nw: nwBucket, mf, nps, epf, ...(intlBucket ? { intl: intlBucket } : {}) };
 }
 
 // ─── Overview page ─────────────────────────────────────────────────────────
@@ -1546,6 +1784,7 @@ export async function getOverviewData(): Promise<OverviewData> {
     creditsRes,
     mfLedger,
     reconstructedRes,
+    iciciReconRes,
     npsTxRows,
     npsNavRows,
     config,
@@ -1567,7 +1806,7 @@ export async function getOverviewData(): Promise<OverviewData> {
     // invested_inr added so we can compute the MF composition bucket
     // (contributions vs growth). Same round-trip as before — one extra
     // column, no extra query.
-    sb.from("fund_holdings").select("fund_code, cap_type, current_value_inr, invested_inr"),
+    sb.from("fund_holdings").select("fund_code, fund_name, cap_type, asset_class, currency, units, current_value_inr, invested_inr, invested_usd, nav_date, nav_usd, fx_usd_inr, redeem_nav_short_usd, one_day_change_inr"),
     sb
       .from("fund_holdings")
       .select("updated_at")
@@ -1611,6 +1850,22 @@ export async function getOverviewData(): Promise<OverviewData> {
         .select(
           "date,mf_value_inr,mf_invested_inr,mf_equity_inr,mf_debt_inr,mf_1d_change_inr,mf_1d_change_pct,mf_gain_pct"
         )
+        .order("date", { ascending: true })
+        .range(from, to)
+    ),
+    // ICICI Nasdaq's per-fund reconstructed daily value — used to split it
+    // out of the MF reconstruction and seed pre-tracking International
+    // history. Missing table degrades to empty (International history then
+    // starts from the observed nw_daily window instead of Feb).
+    fetchAllPagesResult<{
+      date: string;
+      value_inr: number;
+      cost_basis_inr: number;
+    }>((from, to) =>
+      sb
+        .from("mf_daily_reconstructed_by_fund")
+        .select("date,value_inr,cost_basis_inr")
+        .eq("fund_code", "ICICI_NASDAQ")
         .order("date", { ascending: true })
         .range(from, to)
     ),
@@ -1717,7 +1972,22 @@ export async function getOverviewData(): Promise<OverviewData> {
   // in NwRow for full rationale. If both ledger tables are empty (bootstrap
   // install), we skip enrichment and consumers fall back to `mf_invested`.
   let history: NwRow[] = rawHistory;
-  const cumMap = mfLedger.length > 0 ? buildCumulativeDepositMap(mfLedger) : null;
+  // Exclude International funds (ICICI Nasdaq) from the MF deposits curve —
+  // mf_value is ex-intl now, so its deposit base must be too. ICICI's
+  // deposits are carried on the International side via intl_invested.
+  const intlFundCodes = new Set(
+    ((fundsRes.error ? [] : fundsRes.data ?? []) as Array<{
+      fund_code: string;
+      asset_class: string | null;
+    }>)
+      .filter((f) => f.asset_class === "intl")
+      .map((f) => f.fund_code)
+  );
+  const mfOnlyLedger = mfLedger.filter(
+    (e) => e.fund_code == null || !intlFundCodes.has(e.fund_code)
+  );
+  const cumMap =
+    mfOnlyLedger.length > 0 ? buildCumulativeDepositMap(mfOnlyLedger) : null;
   const sortedDepositDates = cumMap ? [...cumMap.keys()].sort() : [];
   if (cumMap) {
     history = rawHistory.map((r) => ({
@@ -1754,13 +2024,30 @@ export async function getOverviewData(): Promise<OverviewData> {
     mf_gain_pct: number | null;
   }>;
   const observedDates = new Set(history.map((r) => r.date));
+  // ICICI's reconstructed per-fund daily value/cost — subtracted from the MF
+  // reconstruction (which sums ALL funds) and reused as the pre-tracking
+  // International series, so both slices are clean back to ICICI's Feb start.
+  const iciciReconRaw = (iciciReconRes.error
+    ? []
+    : iciciReconRes.data ?? []) as Array<{
+    date: string;
+    value_inr: number;
+    cost_basis_inr: number;
+  }>;
+  const iciciReconMap = new Map(
+    iciciReconRaw.map((r) => [
+      r.date,
+      { value: Number(r.value_inr), cost: Number(r.cost_basis_inr) },
+    ])
+  );
   const reconstructedRows: MfDailyRow[] = reconstructedRaw
     .filter((r) => !observedDates.has(r.date))
     .map((r) => {
+      const icici = iciciReconMap.get(r.date);
       const row: MfDailyRow = {
         date: r.date,
-        mf_value: Number(r.mf_value_inr),
-        mf_invested: Number(r.mf_invested_inr),
+        mf_value: Number(r.mf_value_inr) - (icici?.value ?? 0),
+        mf_invested: Number(r.mf_invested_inr) - (icici?.cost ?? 0),
         mf_equity_inr:
           r.mf_equity_inr === null ? null : Number(r.mf_equity_inr),
         mf_debt_inr: r.mf_debt_inr === null ? null : Number(r.mf_debt_inr),
@@ -1797,6 +2084,31 @@ export async function getOverviewData(): Promise<OverviewData> {
     (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
   );
 
+  // ── Build intlHistory: reconstructed ICICI (pre-observed) + observed ─
+  // nw_daily.intl_value. Gives the International sparkline + period grid a
+  // full curve back to ICICI's first buy (Feb); HDFC enters in the observed
+  // window (from the day we started marking it).
+  const intlReconRows: IntlDailyRow[] = iciciReconRaw
+    .filter((r) => !observedDates.has(r.date))
+    .map((r) => ({
+      date: r.date,
+      intl_value: Number(r.value_inr),
+      intl_invested: Number(r.cost_basis_inr),
+      is_reconstructed: true,
+    }));
+  const observedIntlRows: IntlDailyRow[] = history
+    .filter((r) => r.intl_value != null)
+    .map((r) => ({
+      date: r.date,
+      intl_value: Number(r.intl_value),
+      intl_invested: Number(r.intl_invested ?? 0),
+      is_reconstructed: false,
+    }));
+  const intlHistory: IntlDailyRow[] = [
+    ...intlReconRows,
+    ...observedIntlRows,
+  ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
   // ── Build npsHistory: reconstructed daily curve × observed prefer ─
   // Same pattern as mfHistory. buildNpsDailyHistory returns the merged
   // series directly: reconstructed rows outside the nw_daily window,
@@ -1820,7 +2132,7 @@ export async function getOverviewData(): Promise<OverviewData> {
   // today's nw_daily total, so the trend chart's endpoint matches the
   // headline NW card.
   const epfHistory = buildEpfHistory();
-  const nwHistory = buildNwHistory({ mfHistory, npsHistory, epfHistory });
+  const nwHistory = buildNwHistory({ mfHistory, npsHistory, epfHistory, intlHistory });
   const latest = history.length ? history[history.length - 1] : null;
   // XIRR needs the real, ledger-precise "today" value as its terminal
   // flow, not a possibly-anchored reconstructed one — nw_daily.nps_value
@@ -1836,24 +2148,71 @@ export async function getOverviewData(): Promise<OverviewData> {
   );
   const prev = history.length > 1 ? history[history.length - 2] : null;
   const nps = npsRes.error ? null : (npsRes.data as NpsState) ?? null;
+  // Per-scheme (E/C/G) breakdown. Uses nps_state's per-scheme units × NAV
+  // as the terminal value (its nav_date is the freshness of those NAVs);
+  // switches DO count per-scheme, unlike the aggregate npsXirr above.
+  const npsSchemeBreakdown = computeNpsSchemeBreakdown(
+    npsTxRows,
+    nps,
+    nps?.nav_date ?? latest?.date ?? null
+  );
   const funds = (fundsRes.error
     ? []
     : fundsRes.data ?? []) as Array<{
     fund_code: string;
+    fund_name: string | null;
     cap_type: string | null;
+    asset_class: string | null;
+    currency: string | null;
+    units: number | null;
     current_value_inr: number | null;
     invested_inr: number | null;
+    invested_usd: number | null;
+    nav_date: string | null;
+    nav_usd: number | null;
+    fx_usd_inr: number | null;
+    redeem_nav_short_usd: number | null;
+    one_day_change_inr: number | null;
   }>;
+  // MF-only view — International is its own asset class, so it must not feed
+  // the MF NAV-date, stale-count, or equity/debt signals.
+  const mfFunds = funds.filter((f) => f.asset_class !== "intl");
+
+  // Headline MF NAV date = the most common nav_date across funds (matches
+  // the MF Growth card's convention and ignores the odd fund lagging a
+  // day). Surfaces on the MF stat card so the 1D's "as of" day is explicit.
+  const mfNavDate = ((): string | null => {
+    const freq = new Map<string, number>();
+    for (const f of mfFunds) {
+      if (f.nav_date) freq.set(f.nav_date, (freq.get(f.nav_date) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    let bestCount = 0;
+    for (const [d, c] of freq) {
+      if (c > bestCount || (c === bestCount && (best === null || d > best))) {
+        best = d;
+        bestCount = c;
+      }
+    }
+    return best;
+  })();
+
+  // MF funds lagging the headline nav_date (rare — an AMC posting late).
+  // International funds are excluded (they're on their own T+1/T+2 cadence).
+  const mfStaleCount = mfNavDate
+    ? mfFunds.filter((f) => f.nav_date != null && f.nav_date < mfNavDate).length
+    : 0;
 
   // Asset allocation (Equity vs Debt) — see AssetSplit type for bucket
   // definitions. Uses `cap_type` on fund_holdings as the sole classifier:
   // 'debt' → Debt bucket, anything else → Equity bucket. Rows with null
   // cap_type default to Equity (safer than dropping — a mis-tagged large-cap
-  // fund shouldn't silently vanish from the split).
-  const mfEquity = funds
+  // fund shouldn't silently vanish from the split). International funds are
+  // EXCLUDED here — they're their own top-level asset class, not MF equity.
+  const mfEquity = mfFunds
     .filter((f) => (f.cap_type ?? "large") !== "debt")
     .reduce((sum, f) => sum + (f.current_value_inr ?? 0), 0);
-  const mfDebt = funds
+  const mfDebt = mfFunds
     .filter((f) => f.cap_type === "debt")
     .reduce((sum, f) => sum + (f.current_value_inr ?? 0), 0);
 
@@ -1864,7 +2223,9 @@ export async function getOverviewData(): Promise<OverviewData> {
     : 0;
   const epfDebt = latest?.epf_estimate ?? 0;
 
-  const totalEquity = mfEquity + npsEquity;
+  // International (Nasdaq + MSCI World feeders) is 100% equity.
+  const intlEquity = latest?.intl_value ?? 0;
+  const totalEquity = mfEquity + npsEquity + intlEquity;
   const totalDebt = mfDebt + npsDebt + epfDebt;
   const totalConsidered = totalEquity + totalDebt;
   const assetSplit: AssetSplit | null =
@@ -1875,7 +2236,7 @@ export async function getOverviewData(): Promise<OverviewData> {
           totalConsidered,
           equityPct: (totalEquity / totalConsidered) * 100,
           debtPct: (totalDebt / totalConsidered) * 100,
-          breakdown: { mfEquity, mfDebt, npsEquity, npsDebt, epfDebt },
+          breakdown: { mfEquity, mfDebt, intlEquity, npsEquity, npsDebt, epfDebt },
         }
       : null;
 
@@ -1884,6 +2245,96 @@ export async function getOverviewData(): Promise<OverviewData> {
     : (creditsRes.data ?? [])) as RetirementCredit[];
   const epf = epfRes.error ? null : (epfRes.data as EpfState) ?? null;
 
+  // International asset class — per-holding detail + rollup. INR-native funds
+  // (ICICI Nasdaq) report one blended INR number; USD-native funds (HDFC GIFT
+  // City) split into USD-NAV return vs FX return and carry an "exit today"
+  // value (redemption-short, exit load applied).
+  const intlFundDetails: IntlFundDetail[] = funds
+    .filter((f) => f.asset_class === "intl")
+    .map((f) => {
+      const valueInr = Number(f.current_value_inr ?? 0);
+      const investedInr = Number(f.invested_inr ?? 0);
+      const units = Number(f.units ?? 0);
+      const isUsd = f.currency === "USD";
+      const investedUsd = Number(f.invested_usd ?? 0);
+      const navUsd = isUsd ? f.nav_usd ?? null : null;
+      const fxRate = isUsd ? f.fx_usd_inr ?? null : null;
+      const currentUsd = navUsd != null ? units * navUsd : null;
+      const usdReturnPct =
+        isUsd && investedUsd > 0 && currentUsd != null
+          ? ((currentUsd - investedUsd) / investedUsd) * 100
+          : null;
+      // Effective purchase FX = INR paid ÷ USD cost; fxReturn marks the live
+      // rate against it (captures the LRS markup drag + the rupee move).
+      const costFxInr = isUsd && investedUsd > 0 ? investedInr / investedUsd : null;
+      const fxReturnPct =
+        costFxInr != null && fxRate != null
+          ? ((fxRate - costFxInr) / costFxInr) * 100
+          : null;
+      const exitTodayInr =
+        isUsd && f.redeem_nav_short_usd != null && fxRate != null
+          ? units * Number(f.redeem_nav_short_usd) * fxRate
+          : null;
+      return {
+        fundCode: f.fund_code,
+        fundName: f.fund_name ?? f.fund_code,
+        currency: f.currency ?? "INR",
+        valueInr,
+        investedInr,
+        gainPct: investedInr > 0 ? ((valueInr - investedInr) / investedInr) * 100 : 0,
+        oneDayInr: f.one_day_change_inr ?? null,
+        navDate: f.nav_date,
+        navUsd,
+        usdReturnPct,
+        fxRate,
+        fxReturnPct,
+        exitTodayInr,
+      };
+    });
+  const intlValueSum = intlFundDetails.reduce((s, f) => s + f.valueInr, 0);
+  const intlInvestedSum = intlFundDetails.reduce((s, f) => s + f.investedInr, 0);
+  // Freshest intl nav_date, for the "1D · {date}" label.
+  const intlNavDate =
+    intlFundDetails
+      .map((f) => f.navDate)
+      .filter((d): d is string => !!d)
+      .sort()
+      .pop() ?? null;
+  // HDFC DM feeds the iShares MSCI World UCITS ETF: that NAV strikes only after
+  // global markets close, then HDFC applies its TER and publishes — an inherent
+  // ~T+2 lag, so it structurally trails ICICI's same-day AMFI date. That normal
+  // lag is NOT staleness. Flag a fund only when it falls WELL behind the
+  // freshest date (a genuine publish outage): a frozen fund's gap keeps growing
+  // as the freshest advances daily, so a real stall still trips this in days.
+  const INTL_STALE_TOLERANCE_DAYS = 4;
+  const dayGap = (a: string, b: string) =>
+    Math.round(
+      (Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000
+    );
+  const intlStaleCount = intlNavDate
+    ? intlFundDetails.filter(
+        (f) =>
+          f.navDate != null &&
+          dayGap(intlNavDate, f.navDate) > INTL_STALE_TOLERANCE_DAYS
+      ).length
+    : 0;
+  const international: InternationalSummary | null = intlFundDetails.length
+    ? {
+        value: latest?.intl_value ?? intlValueSum,
+        invested: latest?.intl_invested ?? intlInvestedSum,
+        gainPct:
+          latest?.intl_gain_pct ??
+          (intlInvestedSum > 0
+            ? ((intlValueSum - intlInvestedSum) / intlInvestedSum) * 100
+            : 0),
+        oneDayInr: latest?.intl_1d_change_inr ?? null,
+        oneDayPct: latest?.intl_1d_change_pct ?? null,
+        navDate: intlNavDate,
+        navStaleCount: intlStaleCount,
+        funds: intlFundDetails,
+      }
+    : null;
+
   return {
     latest,
     prev,
@@ -1891,20 +2342,54 @@ export async function getOverviewData(): Promise<OverviewData> {
     mfHistory,
     npsHistory,
     npsXirr,
+    npsSchemeBreakdown,
     epfHistory,
     nwHistory,
     nps,
     epf,
-    fundCount: funds.length,
+    fundCount: mfFunds.length,
+    mfNavDate,
+    mfStaleCount,
     lastSync: lastSyncRes.error
       ? null
       : (lastSyncRes.data as { updated_at: string } | null)?.updated_at ?? null,
     config,
     assetSplit,
-    nwDeltas: computeNwDeltas(history),
+    // Chips read the reconstructed multi-year history so windows reach
+    // back to the first contribution, not just observed nw_daily.
+    nwDeltas: computeNwDeltas(nwHistory),
+    // Same period grid, MF-only: map the reconstructed MF series onto the
+    // {total_nw, total_contribution} shape computeNwDeltas expects.
+    mfDeltas: computeNwDeltas(
+      mfHistory.map((r) => ({
+        date: r.date,
+        total_nw: r.mf_value,
+        total_contribution: r.mf_invested,
+      }))
+    ),
+    // International period grid — from the reconstructed + observed intl
+    // curve (reaches back to ICICI's Feb start once the by-fund
+    // reconstruction table is populated).
+    intlDeltas: computeNwDeltas(
+      intlHistory.map((r) => ({
+        date: r.date,
+        total_nw: r.intl_value,
+        total_contribution: r.intl_invested,
+      }))
+    ),
+    international,
+    intlHistory,
     liquiditySplit: computeLiquiditySplit(latest),
     credits,
-    wealthComposition: computeWealthComposition({ latest, nps, epf, funds }),
+    wealthComposition: computeWealthComposition({
+      latest,
+      nps,
+      epf,
+      funds: mfFunds,
+      intl: international
+        ? { current: international.value, invested: international.invested }
+        : null,
+    }),
     indexLevels,
   };
 }
@@ -2042,7 +2527,7 @@ export async function getPortfolioData(): Promise<PortfolioData> {
   type PortfolioMasterRow = Pick<
     MasterSecurity,
     "isin" | "mcap_classification" | "macro_economic_sector" | "region"
-  > & { source: string | null };
+  > & { source: string | null; notes: string | null; country: string | null };
   const [funds, detailRows, latestNw, masterRows] = await Promise.all([
     sb.from("fund_holdings").select("*").order("current_value_inr", { ascending: false }),
     fetchAllPages<FundHoldingDetail>((from, to) =>
@@ -2053,14 +2538,14 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     ),
     sb
       .from("nw_daily")
-      .select("mf_value,nps_value,epf_estimate,total_nw")
+      .select("mf_value,nps_value,epf_estimate,intl_value,total_nw")
       .order("date", { ascending: false })
       .limit(1)
       .maybeSingle(),
     fetchAllPages<PortfolioMasterRow>((from, to) =>
       sb
         .from("master_security_classification")
-        .select("isin,mcap_classification,macro_economic_sector,region,source")
+        .select("isin,mcap_classification,macro_economic_sector,region,source,notes,country")
         .range(from, to)
     ),
   ]);
@@ -2094,22 +2579,34 @@ export async function getPortfolioData(): Promise<PortfolioData> {
       .slice(0, 5);
   }
 
-  // Asset allocation (MF / NPS / EPF)
-  const nw = (latestNw.data as { mf_value: number; nps_value: number; epf_estimate: number; total_nw: number } | null);
+  // Asset allocation (MF / International / NPS / EPF)
+  const nw = (latestNw.data as { mf_value: number; nps_value: number; epf_estimate: number; intl_value: number | null; total_nw: number } | null);
   const totalNw = nw?.total_nw ?? 0;
   const mfTotal = nw?.mf_value ?? fundRows.reduce((s, f) => s + f.current_value_inr, 0);
 
   const assetAllocation: AllocationSlice[] = nw
     ? [
         { name: "Mutual Funds", value: nw.mf_value, key: "mf" },
+        { name: "International", value: nw.intl_value ?? 0, key: "intl" },
         { name: "EPF", value: nw.epf_estimate, key: "epf" },
         { name: "NPS", value: nw.nps_value, key: "nps" },
-      ]
+      ].filter((s) => s.value > 0)
     : [];
 
   // Sector exposure — join detail × master by ISIN in memory
   const masterByIsin = new Map(masterRows.map((m) => [m.isin, m]));
   const fundValueByCode = new Map(fundRows.map((f) => [f.fund_code, f.current_value_inr]));
+
+  // A holding is foreign equity when its master row is tagged US /
+  // International (or mcap 'US'). Used to keep the NSE-classified Sector
+  // exposure card + its drill-down Indian-equity-only, even for a domestic
+  // fund's foreign slice (e.g. PPFAS Flexi Cap's Alphabet/Meta). All foreign
+  // exposure is shown in the Foreign look-through + Country cards instead.
+  const isForeignMaster = (m: PortfolioMasterRow | undefined): boolean =>
+    !!m &&
+    (m.region === "US" ||
+      m.region === "International" ||
+      m.mcap_classification === "US");
 
   // ── Look-through cap allocation ─────────────────────────────────────
   // Replaces the old "group funds by cap_type" logic which was wrong
@@ -2117,9 +2614,8 @@ export async function getPortfolioData(): Promise<PortfolioData> {
   // even when a chunk of the fund sat in mid/small stocks.
   //
   // New rules, applied per stock via fund_holdings_detail × master:
-  //   • master.mcap_classification = Large → 100% Large
-  //       (covers both nse-nifty50 and nse-niftynext50 sources — see
-  //       NN50 convention note on the interface above)
+  //   • master.mcap_classification = Large → split into N50 vs NN50
+  //       by the source tag (nse-nifty50 / nse-niftynext50)
   //   • master.mcap_classification = Mid   → 100% Mid
   //   • Small / Micro / Nano               → 100% Small
   //   • master.region = US (or mcap = US)  → 100% International
@@ -2133,7 +2629,7 @@ export async function getPortfolioData(): Promise<PortfolioData> {
   // reliable than any per-row classification could be.
   //
   // Two derived views are exposed:
-  //   • indianEquityCapSplit — Large/Mid/Small only, sums to
+  //   • indianEquityCapSplit — N50/NN50/Mid/Small, sums to
   //     `indianEquityTotal` (100% within Indian equity)
   //   • mfComposition — Indian equity vs Debt vs International, sums
   //     to `mfTotal`
@@ -2148,7 +2644,10 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     else detailsByFund.set(h.fund_code, [h]);
   }
 
-  let largeInr = 0;
+  // Large is split into its two sub-indices (Nifty 50 vs Nifty Next 50)
+  // via the master `source` tag; see the look-through loop below.
+  let n50Inr = 0;
+  let nn50Inr = 0;
   let midInr = 0;
   let smallInr = 0;
   let intlInr = 0;
@@ -2158,7 +2657,9 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     if (amount <= 0) return;
     switch (capType) {
       case "large":
-        largeInr += amount;
+        // cap_type fallback/residual can't tell N50 from NN50 — default
+        // to N50 (mega-cap proxy). In practice residual is ~cash-sized.
+        n50Inr += amount;
         break;
       case "mid":
         midInr += amount;
@@ -2178,6 +2679,11 @@ export async function getPortfolioData(): Promise<PortfolioData> {
   for (const f of fundRows) {
     const V = f.current_value_inr;
     if (V <= 0) continue;
+    // International is a separate top-level asset class — its funds (ICICI
+    // Nasdaq, HDFC GIFT City) are excluded from the MF composition + cap
+    // split. Only look-through foreign STOCKS held inside domestic MFs
+    // (e.g. PPFAS's US names) still register as the MF intl slice below.
+    if (f.asset_class === "intl") continue;
 
     // Debt / Intl funds bypass look-through: their per-holding
     // classification (bond ISINs mostly aren't in master, US ETFs
@@ -2215,10 +2721,11 @@ export async function getPortfolioData(): Promise<PortfolioData> {
 
       const mcap = m.mcap_classification;
       if (mcap === "Large") {
-        // Both N50 and NN50 rows carry mcap_classification="Large" —
-        // treated identically here. NN50 no longer contributes a mid
-        // slice (2026-07-27 convention change; see interface docstring).
-        largeInr += position;
+        // Split the Large tier into its two NSE sub-indices via the
+        // source tag. Any other Large row (manual override, null source)
+        // defaults to N50 as a mega-cap proxy.
+        if (m.source === "nse-niftynext50") nn50Inr += position;
+        else n50Inr += position;
       } else if (mcap === "Mid") {
         midInr += position;
       } else if (mcap === "Small" || mcap === "Micro" || mcap === "Nano") {
@@ -2243,9 +2750,10 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     }
   }
 
-  const indianEquityTotal = largeInr + midInr + smallInr;
+  const indianEquityTotal = n50Inr + nn50Inr + midInr + smallInr;
   const indianEquityCapSplit: AllocationSlice[] = [
-    { name: "Large cap", value: largeInr, key: "large" },
+    { name: "Nifty 50", value: n50Inr, key: "n50" },
+    { name: "Nifty Next 50", value: nn50Inr, key: "nn50" },
     { name: "Mid cap", value: midInr, key: "mid" },
     { name: "Small cap", value: smallInr, key: "small" },
   ].filter((s) => s.value > 0);
@@ -2255,12 +2763,23 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     { name: "International", value: intlInr, key: "intl" },
   ].filter((s) => s.value > 0);
 
+  // Sector exposure is MF-only — International (ICICI/HDFC) carries a
+  // different (iShares/GICS) sector taxonomy that duplicates the Indian NSE
+  // buckets, and it has its own foreign look-through + country cards.
+  const intlFundCodes = new Set(
+    fundRows.filter((f) => f.asset_class === "intl").map((f) => f.fund_code)
+  );
   const sectorAgg = new Map<string, { value: number; companies: Set<string> }>();
-  let grand = 0;
   for (const h of detailRows) {
+    if (intlFundCodes.has(h.fund_code)) continue;
     const fundValue = fundValueByCode.get(h.fund_code) ?? 0;
     const positionInr = (fundValue * h.weighting_pct) / 100;
+    // Skip 0-weight rows so the tile's company count matches its drill-down
+    // (the drill-down's stockAgg applies the same positionInr > 0 guard).
+    if (positionInr <= 0) continue;
     const master = masterByIsin.get(h.isin);
+    // Indian-equity-only card — drop foreign slices of domestic funds too.
+    if (isForeignMaster(master)) continue;
     const sector = master?.macro_economic_sector;
     if (!sector) continue;
     if (!sectorAgg.has(sector))
@@ -2268,12 +2787,14 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     const bucket = sectorAgg.get(sector)!;
     bucket.value += positionInr;
     bucket.companies.add(h.isin);
-    grand += positionInr;
   }
   const sectorList = Array.from(sectorAgg.entries())
     .map(([name, s]) => ({
       name,
-      pct: grand > 0 ? (s.value / grand) * 100 : 0,
+      // % of MF (nw.mf_value) — same basis as the sector drill-down modal so
+      // the card and its drill-down agree. Sectors don't sum to 100% because
+      // debt / cash / unclassified holdings carry no macro sector.
+      pct: mfTotal > 0 ? (s.value / mfTotal) * 100 : 0,
       companies: s.companies.size,
     }))
     .sort((a, b) => b.pct - a.pct);
@@ -2315,6 +2836,12 @@ export async function getPortfolioData(): Promise<PortfolioData> {
   };
   const stockAgg = new Map<string, StockAggBucket>();
   for (const h of detailRows) {
+    // MF-only look-through — International (asset_class='intl') is a separate
+    // asset class with its own Foreign look-through + Country cards. Excluding
+    // it here keeps Top Stocks, Cross-fund overlap and the sector drill-down
+    // consistent with the MF-only Sector exposure card (whose Indian NSE
+    // taxonomy would otherwise collide with iShares/GICS sector names).
+    if (intlFundCodes.has(h.fund_code)) continue;
     const fundValue = fundValueByCode.get(h.fund_code) ?? 0;
     if (fundValue <= 0) continue;
     const positionInr = (fundValue * h.weighting_pct) / 100;
@@ -2380,6 +2907,8 @@ export async function getPortfolioData(): Promise<PortfolioData> {
   const stocksBySector: Record<string, LookthroughStock[]> = {};
   for (const stock of lookthrough) {
     if (!stock.sector) continue;
+    // Keep the drill-down Indian-equity-only, matching the tile.
+    if (isForeignMaster(masterByIsin.get(stock.isin))) continue;
     if (!stocksBySector[stock.sector]) stocksBySector[stock.sector] = [];
     stocksBySector[stock.sector].push(stock);
   }
@@ -2387,11 +2916,178 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     stocksBySector[key].sort((a, b) => b.effective_inr - a.effective_inr);
   }
 
+  // ── Foreign look-through (cross-fund) ─────────────────────────
+  // Every fund's foreign equity, merged by company across ALL funds —
+  // ICICI Nasdaq, HDFC DM, and domestic funds' foreign slices (PPFAS's US
+  // names). Unlike the India-centric look-through above, this KEEPS intl
+  // funds and keeps only foreign stocks (master region US / International,
+  // or mcap US). Effective ₹ = fund value × weight%, summed per company;
+  // share-class dupes (Alphabet A/C) merge by name so it reads as "my
+  // Alphabet exposure", not two rows.
+  const masterByIsinFx = new Map(masterRows.map((m) => [m.isin, m]));
+  const fundNameByCode = new Map(fundRows.map((f) => [f.fund_code, f.fund_name]));
+  const decodeName = (s: string) =>
+    s.replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim();
+  // Country: the first-class column when present (migration 2026-09-02),
+  // else parsed from the notes we stamp on ingested rows ("… (Japan)").
+  const deriveCountry = (m: PortfolioMasterRow): string => {
+    if (m.country && m.country.trim()) return m.country.trim();
+    if (m.source === "ishares-msci-world" && m.notes) {
+      const mm = /\(([^)]+)\)/.exec(m.notes);
+      if (mm) return mm[1].trim();
+    }
+    return m.region === "US" ? "United States" : "Other";
+  };
+  // Canonicalise GICS sector-label variants across sources (iShares uses GICS
+  // official names, ICICI/Morningstar-style feeds differ) so the foreign
+  // sector card doesn't split near-duplicates like "Communication" vs
+  // "Communication Services". Extend the map as new foreign sources land.
+  const canonicalGicsSector = (s: string | null): string | null => {
+    if (!s) return s;
+    const canon: Record<string, string> = {
+      communication: "Communication Services",
+      "communication services": "Communication Services",
+      telecommunication: "Communication Services",
+      telecommunications: "Communication Services",
+      "telecommunication services": "Communication Services",
+      healthcare: "Health Care",
+      "health care": "Health Care",
+      technology: "Information Technology",
+      "information technology": "Information Technology",
+      "consumer cyclical": "Consumer Discretionary",
+      "consumer discretionary": "Consumer Discretionary",
+      "consumer defensive": "Consumer Staples",
+      "consumer staples": "Consumer Staples",
+      "financial services": "Financials",
+      financials: "Financials",
+    };
+    return canon[s.trim().toLowerCase()] ?? s.trim();
+  };
+  type FxAgg = {
+    name: string;
+    sector: string | null;
+    country: string;
+    inr: number;
+    byFund: Map<string, number>;
+  };
+  const fxByCompany = new Map<string, FxAgg>();
+  for (const h of detailRows) {
+    const m = masterByIsinFx.get(h.isin);
+    if (!m) continue;
+    const isForeign =
+      m.region === "US" ||
+      m.region === "International" ||
+      m.mcap_classification === "US";
+    if (!isForeign) continue;
+    const fundVal = fundValueByCode.get(h.fund_code) ?? 0;
+    if (fundVal <= 0) continue;
+    const eff = fundVal * (h.weighting_pct / 100);
+    if (!(eff > 0)) continue;
+    const name = decodeName(h.company_name ?? h.isin);
+    const key = name.toLowerCase();
+    let agg = fxByCompany.get(key);
+    if (!agg) {
+      agg = {
+        name,
+        sector: canonicalGicsSector(m.macro_economic_sector),
+        country: deriveCountry(m),
+        inr: 0,
+        byFund: new Map(),
+      };
+      fxByCompany.set(key, agg);
+    }
+    if (!agg.sector && m.macro_economic_sector)
+      agg.sector = canonicalGicsSector(m.macro_economic_sector);
+    agg.inr += eff;
+    agg.byFund.set(h.fund_code, (agg.byFund.get(h.fund_code) ?? 0) + eff);
+  }
+  const foreignTotalInr = [...fxByCompany.values()].reduce((s, a) => s + a.inr, 0);
+  const foreignStocks: ForeignHolding[] = [...fxByCompany.values()]
+    .map((a) => ({
+      name: a.name,
+      sector: a.sector,
+      country: a.country,
+      effective_inr: a.inr,
+      pct_of_foreign: foreignTotalInr > 0 ? (a.inr / foreignTotalInr) * 100 : 0,
+      held_via: [...a.byFund.entries()]
+        .map(([fc, inr]) => ({
+          fund_code: fc,
+          fund_name: fundNameByCode.get(fc) ?? fc,
+          inr,
+        }))
+        .sort((x, y) => y.inr - x.inr),
+    }))
+    .sort((a, b) => b.effective_inr - a.effective_inr);
+  const fxFundTotals = new Map<string, number>();
+  for (const s of foreignStocks)
+    for (const v of s.held_via)
+      fxFundTotals.set(v.fund_code, (fxFundTotals.get(v.fund_code) ?? 0) + v.inr);
+  // Country composition — group the (already weight-sorted) companies by
+  // country; each country keeps its top-100 holdings for the drill-down.
+  const foreignByCountry = new Map<string, ForeignHolding[]>();
+  for (const s of foreignStocks) {
+    const c = s.country || "Other";
+    const arr = foreignByCountry.get(c);
+    if (arr) arr.push(s);
+    else foreignByCountry.set(c, [s]);
+  }
+  const foreignCountries: ForeignCountry[] = [...foreignByCountry.entries()]
+    .map(([country, list]) => {
+      const inr = list.reduce((sum, x) => sum + x.effective_inr, 0);
+      return {
+        country,
+        effective_inr: inr,
+        pct_of_foreign: foreignTotalInr > 0 ? (inr / foreignTotalInr) * 100 : 0,
+        n_companies: list.length,
+        stocks: list.slice(0, 100),
+      };
+    })
+    .sort((a, b) => b.effective_inr - a.effective_inr);
+  // Sector composition — same grouping as countries but by (canonical) GICS
+  // sector. Foreign holdings carry a GICS taxonomy, distinct from the Indian
+  // NSE sector card; unclassified names fall into an "Unclassified" bucket.
+  const foreignBySector = new Map<string, ForeignHolding[]>();
+  for (const s of foreignStocks) {
+    const sec = s.sector || "Unclassified";
+    const arr = foreignBySector.get(sec);
+    if (arr) arr.push(s);
+    else foreignBySector.set(sec, [s]);
+  }
+  const foreignSectors: ForeignSector[] = [...foreignBySector.entries()]
+    .map(([sector, list]) => {
+      const inr = list.reduce((sum, x) => sum + x.effective_inr, 0);
+      return {
+        sector,
+        effective_inr: inr,
+        pct_of_foreign: foreignTotalInr > 0 ? (inr / foreignTotalInr) * 100 : 0,
+        n_companies: list.length,
+        stocks: list.slice(0, 100),
+      };
+    })
+    .sort((a, b) => b.effective_inr - a.effective_inr);
+  const foreignLookthrough: ForeignLookthrough = {
+    total_inr: foreignTotalInr,
+    total_companies: foreignStocks.length,
+    by_fund: [...fxFundTotals.entries()]
+      .map(([fc, inr]) => ({ fund_code: fc, fund_name: fundNameByCode.get(fc) ?? fc, inr }))
+      .sort((a, b) => b.inr - a.inr),
+    // Cap to the top 100 by weight — the long tail (HDFC's MSCI World
+    // micro-positions) is noise and would bloat the RSC payload.
+    stocks: foreignStocks.slice(0, 100),
+    countries: foreignCountries,
+    sectors: foreignSectors,
+  };
+
   // ── Headline: invested / current / gain / 1D ──
   // 1D aggregate: sum of one_day_change_inr across funds (Groww's per-
   // fund chip). Null when no fund has a persisted value yet.
-  const invested = fundRows.reduce((s, f) => s + (f.invested_inr ?? 0), 0);
-  const oneDayFunds = fundRows.filter((f) => f.one_day_change_inr != null);
+  //
+  // MF-only rows: International is a separate asset class and mfTotal
+  // (nw.mf_value) already excludes it, so invested/1D must too or the
+  // headline gain would be nonsense (ex-intl value − incl-intl invested).
+  const mfFundRows = fundRows.filter((f) => f.asset_class !== "intl");
+  const invested = mfFundRows.reduce((s, f) => s + (f.invested_inr ?? 0), 0);
+  const oneDayFunds = mfFundRows.filter((f) => f.one_day_change_inr != null);
   const oneDayInr = oneDayFunds.length
     ? oneDayFunds.reduce((s, f) => s + (f.one_day_change_inr ?? 0), 0)
     : null;
@@ -2401,6 +3097,33 @@ export async function getPortfolioData(): Promise<PortfolioData> {
       : null;
   const gainInr = mfTotal - invested;
   const gainPct = invested > 0 ? (gainInr / invested) * 100 : 0;
+
+  // International — separate asset class; surfaced beside MF in the
+  // headline so it mirrors the allocation donut (which counts intl).
+  const intlRows = fundRows.filter((f) => f.asset_class === "intl");
+  const intlValue = intlRows.reduce((s, f) => s + (f.current_value_inr ?? 0), 0);
+  const intlInvested = intlRows.reduce((s, f) => s + (f.invested_inr ?? 0), 0);
+  const intlGainInr = intlValue - intlInvested;
+  const intlGainPct = intlInvested > 0 ? (intlGainInr / intlInvested) * 100 : 0;
+
+  // Combined MF + International for the "Total gain" / "1D" chips — the
+  // word "Total" must be honest now that intl sits in the same row.
+  const totalInvested = invested + intlInvested;
+  const totalCurrent = mfTotal + intlValue;
+  const totalGainInr = totalCurrent - totalInvested;
+  const totalGainPct = totalInvested > 0 ? (totalGainInr / totalInvested) * 100 : 0;
+  const intlOneDayRows = intlRows.filter((f) => f.one_day_change_inr != null);
+  const intlOneDayInr = intlOneDayRows.reduce(
+    (s, f) => s + (f.one_day_change_inr ?? 0),
+    0
+  );
+  const hasOneDay = oneDayInr != null || intlOneDayRows.length > 0;
+  const totalOneDayInr = hasOneDay ? (oneDayInr ?? 0) + intlOneDayInr : null;
+  const totalOneDayPct =
+    totalOneDayInr != null && totalCurrent - totalOneDayInr > 0
+      ? (totalOneDayInr / (totalCurrent - totalOneDayInr)) * 100
+      : null;
+
   const headline: PortfolioHeadline = {
     invested,
     current: mfTotal,
@@ -2408,11 +3131,21 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     gainPct,
     oneDayInr,
     oneDayPct,
-    fundCount: fundRows.length,
+    fundCount: mfFundRows.length,
+    intlValue,
+    intlInvested,
+    intlGainInr,
+    intlGainPct,
+    intlFundCount: intlRows.length,
+    totalInvested,
+    totalGainInr,
+    totalGainPct,
+    totalOneDayInr,
+    totalOneDayPct,
   };
 
   return {
-    funds: fundRows,
+    funds: mfFundRows,
     topHoldingsByFund: topByFund,
     assetAllocation,
     mfComposition,
@@ -2426,6 +3159,9 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     crossFundOverlap,
     sectorConcentration,
     stocksBySector,
+    intlFunds: intlRows,
+    intlTotal: intlValue,
+    foreignLookthrough,
   };
 }
 
@@ -2442,6 +3178,97 @@ function severityFor(pct: number): SectorSeverity {
 
 // ─── Sync page ─────────────────────────────────────────────────────────────
 
+// Row shape summariseNavPanel needs — structurally a subset of the
+// getSyncData FundRow, so both the MF and Intl fund lists satisfy it.
+type NavSummaryRow = {
+  fund_code: string;
+  fund_name: string;
+  current_value_inr: number;
+  nav_prev: number | null;
+  nav_date: string | null;
+  nav_updated_at: string | null;
+  nav_source: MfNavSource | null;
+};
+
+/**
+ * Collapse a set of fund_holdings rows into a RefreshNavsCard NAV panel
+ * summary: headline nav_date = most-common date (tiebreak most recent),
+ * with the laggards bucketed as stale.
+ */
+function summariseNavPanel(rows: NavSummaryRow[]): NavPanelSummary {
+  const dateFreq = new Map<string, number>();
+  for (const f of rows) {
+    if (f.nav_date) dateFreq.set(f.nav_date, (dateFreq.get(f.nav_date) ?? 0) + 1);
+  }
+  let headlineDate: string | null = null;
+  let bestCount = 0;
+  for (const [d, count] of dateFreq.entries()) {
+    // Tiebreak: prefer the more recent date so a split shows the fresh one.
+    if (
+      count > bestCount ||
+      (count === bestCount && (headlineDate === null || d > headlineDate))
+    ) {
+      headlineDate = d;
+      bestCount = count;
+    }
+  }
+  const staleFunds = headlineDate
+    ? rows
+        .filter((f) => f.nav_date != null && f.nav_date < headlineDate!)
+        .map((f) => ({
+          fund_code: f.fund_code,
+          fund_name: f.fund_name,
+          nav_date: f.nav_date,
+        }))
+        .sort((a, b) => {
+          const ad = a.nav_date ?? "";
+          const bd = b.nav_date ?? "";
+          if (ad !== bd) return ad < bd ? -1 : 1;
+          return a.fund_code < b.fund_code ? -1 : a.fund_code > b.fund_code ? 1 : 0;
+        })
+    : [];
+  const freshFunds = headlineDate
+    ? rows
+        .filter((f) => f.nav_date === headlineDate)
+        .map((f) => ({
+          fund_code: f.fund_code,
+          fund_name: f.fund_name,
+          nav_date: f.nav_date,
+        }))
+        .sort((a, b) =>
+          a.fund_code < b.fund_code ? -1 : a.fund_code > b.fund_code ? 1 : 0
+        )
+    : [];
+  let latestSource: MfNavSource | null = null;
+  let latestSourceTs = "";
+  for (const f of rows) {
+    if (f.nav_updated_at && f.nav_source && f.nav_updated_at > latestSourceTs) {
+      latestSourceTs = f.nav_updated_at;
+      latestSource = f.nav_source;
+    }
+  }
+  let latestUpdatedAt: string | null = null;
+  for (const f of rows) {
+    if (
+      f.nav_updated_at &&
+      (latestUpdatedAt === null || f.nav_updated_at > latestUpdatedAt)
+    ) {
+      latestUpdatedAt = f.nav_updated_at;
+    }
+  }
+  return {
+    nav_date: headlineDate,
+    nav_updated_at: latestUpdatedAt,
+    nav_source: latestSource,
+    total_value_inr: rows.reduce((s, f) => s + Number(f.current_value_inr ?? 0), 0),
+    fund_count: rows.length,
+    stale_fund_count: staleFunds.length,
+    stale_funds: staleFunds,
+    fresh_funds: freshFunds,
+    has_prev: rows.some((f) => Number(f.nav_prev ?? 0) > 0),
+  };
+}
+
 export async function getSyncData(): Promise<SyncData> {
   // fund_holdings_detail and master_security_classification each need
   // fetchAllPages() to bypass the db-max-rows=1000 cap — see helper
@@ -2452,6 +3279,8 @@ export async function getSyncData(): Promise<SyncData> {
     fund_code: string;
     fund_name: string;
     cap_type: CapType;
+    asset_class: string | null;
+    currency: string | null;
     updated_at: string;
     current_value_inr: number;
     nav: number | null;
@@ -2504,7 +3333,7 @@ export async function getSyncData(): Promise<SyncData> {
     sb
       .from("fund_holdings")
       .select(
-        "fund_code,fund_name,cap_type,updated_at,current_value_inr,nav,nav_prev,nav_date,nav_updated_at,nav_source"
+        "fund_code,fund_name,cap_type,asset_class,currency,updated_at,current_value_inr,nav,nav_prev,nav_date,nav_updated_at,nav_source"
       )
       .order("current_value_inr", { ascending: false }),
     fetchAllPages<DetailRow>((from, to) =>
@@ -2634,11 +3463,18 @@ export async function getSyncData(): Promise<SyncData> {
       coverage_pct: coverage,
       security_coverage_pct: sec,
       nonsec_coverage_pct: nsec,
+      currency: f.currency,
       // Healthy >= 95%. Below that the fund has stale/missing look-through
-      // data (typically debt bonds not seeded in master_security_classification)
-      // and the "Low coverage" badge signals it needs manual review, not that the
-      // resync failed.
-      state: coverage < 95 ? "error" : "idle",
+      // data (typically debt bonds not in master_security_classification) →
+      // "Low coverage" for manual review. A foreign USD fund with NO look-
+      // through at all → N/A; once it has constituent detail (HDFC via the
+      // MSCI World ingest), coverage drives the badge like any other fund.
+      state:
+        f.currency === "USD" && coverage <= 0
+          ? "na"
+          : coverage < 95
+            ? "error"
+            : "idle",
       detail_rows: secCountByFund[f.fund_code] ?? 0,
       nonsec_rows: nonSecCountByFund[f.fund_code] ?? 0,
       portfolio_date: portfolioDateByFund[f.fund_code] ?? null,
@@ -2663,90 +3499,17 @@ export async function getSyncData(): Promise<SyncData> {
     nav_source: NavSource | null;
   } | null;
 
-  // ─── MF NAV summary for the unified RefreshNavsCard ──────────────
+  // ─── MF + International NAV summaries for RefreshNavsCard ────────
   //
-  // Pick a headline nav_date = most common nav_date across funds. Same
-  // reasoning as the refresh-mf-nav route: a lone T+2 FoF shouldn't
-  // set the batch's label. If everything is null (fresh install,
-  // pre-first-paste), headline stays null and the card renders a
-  // "never refreshed" state.
-  const dateFreq = new Map<string, number>();
-  for (const f of fundRows) {
-    if (f.nav_date) dateFreq.set(f.nav_date, (dateFreq.get(f.nav_date) ?? 0) + 1);
-  }
-  let mfHeadlineDate: string | null = null;
-  let mfBestCount = 0;
-  for (const [d, count] of dateFreq.entries()) {
-    // Tiebreak: prefer the more recent date so a 5-5 split shows the fresh one.
-    if (
-      count > mfBestCount ||
-      (count === mfBestCount && (mfHeadlineDate === null || d > mfHeadlineDate))
-    ) {
-      mfHeadlineDate = d;
-      mfBestCount = count;
-    }
-  }
-  const mfStaleCount = mfHeadlineDate
-    ? fundRows.filter(
-        (f) => f.nav_date != null && f.nav_date < mfHeadlineDate!
-      ).length
-    : 0;
-  const mfStaleFunds = mfHeadlineDate
-    ? fundRows
-        .filter((f) => f.nav_date != null && f.nav_date < mfHeadlineDate)
-        .map((f) => ({
-          fund_code: f.fund_code,
-          fund_name: f.fund_name,
-          nav_date: f.nav_date,
-        }))
-        .sort((a, b) => {
-          const ad = a.nav_date ?? "";
-          const bd = b.nav_date ?? "";
-          if (ad !== bd) return ad < bd ? -1 : 1;
-          return a.fund_code < b.fund_code ? -1 : a.fund_code > b.fund_code ? 1 : 0;
-        })
-    : [];
-  const mfFreshFunds = mfHeadlineDate
-    ? fundRows
-        .filter((f) => f.nav_date === mfHeadlineDate)
-        .map((f) => ({
-          fund_code: f.fund_code,
-          fund_name: f.fund_name,
-          nav_date: f.nav_date,
-        }))
-        .sort((a, b) =>
-          a.fund_code < b.fund_code ? -1 : a.fund_code > b.fund_code ? 1 : 0
-        )
-    : [];
-  // Pick nav_source based on most-recent nav_updated_at across all
-  // funds. If a Groww paste just landed and mfapi hasn't yet caught up,
-  // the badge says "Groww" — accurate provenance.
-  let mfLatestSource: MfNavSource | null = null;
-  let mfLatestSourceTs = "";
-  for (const f of fundRows) {
-    if (f.nav_updated_at && f.nav_source) {
-      if (f.nav_updated_at > mfLatestSourceTs) {
-        mfLatestSourceTs = f.nav_updated_at;
-        mfLatestSource = f.nav_source;
-      }
-    }
-  }
-  // Overall nav_updated_at for the card = max across all funds. The
-  // mini-panel's "Last refreshed" ticker reads this.
-  let mfLatestUpdatedAt: string | null = null;
-  for (const f of fundRows) {
-    if (
-      f.nav_updated_at &&
-      (mfLatestUpdatedAt === null || f.nav_updated_at > mfLatestUpdatedAt)
-    ) {
-      mfLatestUpdatedAt = f.nav_updated_at;
-    }
-  }
-  const mfTotalValue = fundRows.reduce(
-    (s, f) => s + Number(f.current_value_inr ?? 0),
-    0
-  );
-  const mfHasPrev = fundRows.some((f) => Number(f.nav_prev ?? 0) > 0);
+  // International (ICICI Nasdaq + HDFC GIFT City) is a separate asset
+  // class, split out so the MF panel doesn't count HDFC — which the
+  // AMFI/mfapi refresh can't touch — as a stale mutual fund. Both share
+  // summariseNavPanel (headline = most-common nav_date, tiebreak most
+  // recent; stragglers are stale).
+  const mfRows = fundRows.filter((f) => f.asset_class !== "intl");
+  const intlRows = fundRows.filter((f) => f.asset_class === "intl");
+  const mfSummary = mfRows.length ? summariseNavPanel(mfRows) : null;
+  const intlSummary = intlRows.length ? summariseNavPanel(intlRows) : null;
 
   // ─── Cap-classification distribution ───────────────────────────────
   //
@@ -2831,6 +3594,9 @@ export async function getSyncData(): Promise<SyncData> {
   let manualOverrideCount = 0;
 
   for (const r of capDistRows) {
+    // MSCI World developed-markets constituents (HDFC look-through source)
+    // aren't part of the India/US index cap universe these tiles count.
+    if (r.source === "ishares-msci-world") continue;
     if (r.confidence && r.confidence.toLowerCase().includes("manual")) {
       manualOverrideCount++;
     }
@@ -2911,19 +3677,8 @@ export async function getSyncData(): Promise<SyncData> {
     fundCount: fundRows.length,
     totalDetailRows: details.length + nonSec.length,
     fundResync,
-    mf: fundRows.length
-      ? {
-          nav_date: mfHeadlineDate,
-          nav_updated_at: mfLatestUpdatedAt,
-          nav_source: mfLatestSource,
-          total_value_inr: mfTotalValue,
-          fund_count: fundRows.length,
-          stale_fund_count: mfStaleCount,
-          stale_funds: mfStaleFunds,
-          fresh_funds: mfFreshFunds,
-          has_prev: mfHasPrev,
-        }
-      : null,
+    mf: mfSummary,
+    intl: intlSummary,
     nps: npsRow
       ? {
           nav_date: npsRow.nav_date,
@@ -3642,6 +4397,77 @@ function computeNpsXirr(
   }
 
   return computeXirr(flows);
+}
+
+/**
+ * Per-scheme (E/C/G) NPS Tier-I breakdown: current value (units × today's
+ * NAV from nps_state), net invested cost basis, corpus share, and a
+ * per-scheme XIRR.
+ *
+ * DIFFERS FROM computeNpsXirr IN ONE KEY WAY — switches count here.
+ * The aggregate XIRR deliberately drops switch_in/out because they net to
+ * zero across the whole corpus. But for a SINGLE scheme, a switch is a
+ * genuine external flow: value entering (switch_in / shifting_in) or
+ * leaving (switch_out / shifting_out) that scheme. So the per-scheme flow
+ * set is {contribution, switch_in, switch_out, shifting_in, shifting_out,
+ * withdrawal} — everything except billing (a fee already captured in the
+ * reduced terminal value).
+ *
+ * `amount` in nps_transactions is signed from the CORPUS perspective
+ * (+ = value added to that scheme, − = removed), so:
+ *   • invested   = Σ amount   (net cost basis now sitting in the scheme)
+ *   • XIRR flow  = −amount     (investor perspective) + terminal value in
+ */
+function computeNpsSchemeBreakdown(
+  txRows: NpsTxRow[],
+  nps: NpsState | null,
+  asOfDate: string | null
+): NpsSchemeBreakdownRow[] {
+  if (!nps) return [];
+
+  const schemes: {
+    scheme: "E" | "C" | "G";
+    label: string;
+    units: number;
+    nav: number;
+  }[] = [
+    { scheme: "E", label: "Equity", units: nps.scheme_e_units, nav: nps.scheme_e_nav },
+    { scheme: "C", label: "Corporate bonds", units: nps.scheme_c_units, nav: nps.scheme_c_nav },
+    { scheme: "G", label: "Govt securities", units: nps.scheme_g_units, nav: nps.scheme_g_nav },
+  ];
+
+  const values = schemes.map((s) => s.units * s.nav);
+  const totalValue = values.reduce((a, b) => a + b, 0);
+
+  const FLOW_TYPES = new Set([
+    "contribution",
+    "switch_in",
+    "switch_out",
+    "shifting_in",
+    "shifting_out",
+    "withdrawal",
+  ]);
+
+  return schemes.map((s, i) => {
+    const value = values[i];
+    const rows = txRows.filter(
+      (t) => t.tier === "I" && t.scheme === s.scheme && FLOW_TYPES.has(t.tx_type)
+    );
+    const invested = rows.reduce((sum, t) => sum + t.amount, 0);
+    const flows: CashFlow[] = rows.map((t) => ({ date: t.tx_date, amount: -t.amount }));
+    if (asOfDate && value > 0) flows.push({ date: asOfDate, amount: value });
+    return {
+      scheme: s.scheme,
+      label: s.label,
+      units: s.units,
+      nav: s.nav,
+      value,
+      invested,
+      splitPct: totalValue > 0 ? (value / totalValue) * 100 : 0,
+      gainPct: invested > 0 ? ((value - invested) / invested) * 100 : null,
+      xirr: computeXirr(flows),
+    };
+  });
 }
 
 /**

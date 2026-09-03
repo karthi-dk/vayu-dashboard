@@ -7,6 +7,153 @@ reasoning from scratch.
 
 ---
 
+## Commodity (Gold now, Silver later) — new asset class, PLANNED for Sep 2026
+
+User is buying a small gold position this month (**max ~₹2 L**, an ETF or a
+fund) and may add silver later. Decision (2026-09-02): model it as **one
+general asset class, not `'gold'`** — so silver / future commodities slot in
+with no schema churn.
+
+**Design decisions (locked):**
+- `fund_holdings.asset_class = 'commodity'` (broadest — covers metals *and*
+  any future commodity). Display label in UI = "Precious Metals" (or
+  "Commodities"). DB value ≠ display label, so we can relabel freely.
+- Gold and silver stay **distinct at the holding level** (one `fund_holdings`
+  row each, own NAV) but roll up into **one "Commodities" band** in the
+  composition charts — you don't want a tiny band per metal. The stat card can
+  sub-split gold vs silver like the NPS card splits E/C/G
+  (`computeNpsSchemeBreakdown` is the template).
+- Commodity is neither equity nor debt → **exclude from the Equity/Debt
+  split**; it **counts as liquid** (ETF/fund redeemable) in the Liquidity card.
+
+**Data source (depends on ETF vs fund — but both are easy):**
+- A gold/silver **fund** (e.g. Nippon India / HDFC / SBI Gold Savings Fund) or
+  an **ETF** (GOLDBEES etc.) has a daily **AMFI NAV**, so it rides the existing
+  MF NAV pipeline (`refresh-mf-nav` / mfapi.in) with **zero new plumbing** —
+  just tag the holding and give it an AMFI scheme code.
+- Only if the user wants the **live NSE market price** of an ETF (vs end-of-day
+  NAV) do we add a Yahoo ticker path (`GOLDBEES.NS` etc.), like the intl FX.
+  Default = NAV (simplest).
+
+**Implementation = mirror the International asset class** (shipped 2026-09-02;
+see `/memories/repo/build-notes.md` "INTERNATIONAL ASSET CLASS SHIPPED" +
+"INTL SLICE-CONSUMER SWEEP" for the exact file list). Steps:
+1. Migration: allow `asset_class='commodity'`; add `nw_daily.commodity_value /
+   commodity_invested / commodity_1d_change_inr / _pct / _gain_pct` (once).
+2. `lib/recomputeNwDaily.ts`: split out `commodityRows`; `total_nw = mf + nps +
+   epf + intl + commodity`; derive commodity 1D from Σ one_day_change_inr.
+3. Slice-consumer sweep (the STANDING LESSON — grep `mf_value|nps_value|
+   epf_estimate|intl_value` rollups + `{mf,nps,epf,intl}` slice UI):
+   NWCompositionChart, WealthCompositionCard, LiquidityCard (liquid),
+   EquityDebtCard (EXCLUDE), HeadlineNW 1D, a Commodities StatCard,
+   RefreshAllButton, `recompute-today-nw.mjs`, `buildNwHistory`
+   (`lib/nwReconstruct.ts`), and getOverviewData/getPortfolioData.
+4. Seed the holding(s) + (if fund/ETF-by-NAV) confirm the AMFI code resolves on
+   mfapi.
+
+**To execute, still need from user (when they buy):**
+1. Exact instrument(s) — name + **AMFI scheme code** (fund/ETF NAV) or **NSE
+   ticker** (ETF live price).
+2. ETF or fund (confirms data source).
+3. Buy date + amount / units (to seed `fund_holdings`).
+
+Recommended timing: wait until the actual purchase, then do it in one clean
+pass (the amount is small and the pattern is proven, so it's low-effort).
+
+---
+
+## Asset-class reorganization — allocation-first 5 buckets (FUTURE)
+
+Requested 2026-09-03. User wants the top-level asset classes regrouped by
+ASSET TYPE / risk (not product wrapper) for a clearer allocation /
+diversification view:
+
+  1. Indian MF     — Indian EQUITY MF only
+  2. International  — HDFC DM + ICICI Nasdaq (asset_class='intl')
+  3. Gold          — asset_class='commodity' (see Commodity section above)
+  4. Fixed         — EPF + debt / arbitrage / conservative-hybrid MF
+  5. NPS           — its own bucket; E/C/G NOT counted in any other bucket (DECIDED)
+
+**GOOD NEWS — the data already exists; this is a ROLLUP REMAP, not a schema
+rewrite** (except Gold's 'commodity' class, already planned). `nw_daily`
+already splits `mf_equity_inr` / `mf_debt_inr` (recomputeNwDaily: cap_type
+='debt' → debt, else equity), plus `epf_estimate`, `intl_value`, `nps_value`
+(and `commodity_value` once Gold lands). So the buckets are just:
+  - Indian MF (equity) = `mf_equity_inr`
+  - Fixed              = `mf_debt_inr + epf_estimate`
+  - International       = `intl_value`
+  - Gold               = `commodity_value`
+  - NPS                = `nps_value`
+
+Current holdings map cleanly with NO new tagging: HDFC_STD (Short Term Debt)
+and PPFAS_CH (Conservative Hybrid) are BOTH already `cap_type='debt'` → Fixed;
+the 7 equity funds (PPFAS_FC, UTI_N50, UTI_NN50, HDFC_FC, NIPPON_MID, EDEL_MID,
+HDFC_SC) → Indian MF. If an arbitrage fund is added later, tag it
+`cap_type='debt'` (or add a distinct sleeve tag) so it routes to Fixed.
+Live snapshot 2026-09-03: Indian MF ~₹39.3L · International ~₹5.8L · Fixed
+~₹21.3L (EPF 19.2 + debt MF 2.05) · NPS ~₹6.1L.
+
+NPS DECISION — **DECIDED 2026-09-03: option (a)**. NPS stays its OWN bucket; its
+E/C/G is fully self-contained and **NOT counted in any other bucket** (Indian MF
+stays equity ex-NPS; Fixed stays EPF + debt-MF ex-NPS). No look-through split.
+So the scheme is a deliberate hybrid: NPS is the one product-wrapper bucket, the
+other four are asset-type. (Rejected (b), the E→equity / C+G→Fixed look-through —
+keep NPS opaque as a single illiquid retirement bucket.)
+
+SCOPE: mostly presentation — a shared bucket-mapping consumed by the
+allocation donut, NW Composition, Wealth Composition, Equity/Debt, Liquidity
+and the stat-card row. Same "slice-consumer sweep" discipline as the
+International class (grep the `{mf,nps,epf,intl}` rollups + slice UI). No
+migration beyond Gold's `commodity`. Best done together with / right after the
+Gold build.
+
+---
+
+## NPS: remove from UI + net-worth (keep growing hidden) — PARKED
+
+Requested 2026-08-26, then parked (“I'll decide later”). User wants NPS out
+of all main UI + net-worth math because it's illiquid — let it keep syncing/
+growing but shown only on a hidden page. Discovery is done; **three decisions
+are still open** before implementing:
+
+1. **NW history** — recompute stored `nw_daily.total_nw = mf + epf` for every
+   past day (clean, permanent), OR subtract NPS only at read/display time.
+2. **Hidden home** — a hidden `/nps` page (not in nav, URL-reachable), OR
+   DB-only (no UI at all).
+3. **Syncing/controls** — keep NPS auto-syncing and move its controls (NAV
+   refresh, CAS/CRA paste, unit/contrib edits) to `/nps`, OR leave them where
+   they are, OR freeze NPS.
+
+Key facts from the touch-point map: `total_nw` is **stored** in `nw_daily`
+(via `recomputeNwDaily`), the NW charts read **both** stored `nw_daily` AND
+reconstructed `nwHistory` (`buildNwHistory` sums mf+nps+epf), and **no**
+standalone NPS page exists yet. Draft approach (if all-recommended): keep the
+`nps_*` tables + sync routes + cron; `recomputeNwDaily` → `mf + epf`; backfill
+historical `total_nw`; `buildNwHistory` total = mf+epf (retain `nps_value`
+column for `/nps`); strip NPS from Overview cards/charts + headline 1D; add a
+hidden `app/nps/page.tsx`. NPS is woven into: Overview NPS card,
+`NpsGrowthBreakdown`, Wealth-Composition donut, Equity/Debt split, Liquidity
+card, NW trend + composition charts, headline 1D, Settings/Sync/Credits.
+
+---
+
+## International / foreign look-through — deferred polish
+
+Shipped 2026-09-02 (International asset class + Foreign look-through /
+Country / Foreign-sector cards). Two nice-to-haves were explicitly
+deferred:
+
+1. **Data-freshness “as of” on the foreign look-through** — ICICI’s
+   underlying holdings come from a Dhan snapshot that can lag (e.g.
+   “31 May”); surface the as-of date so a stale look-through is visible.
+   HDFC DM’s iShares paste already carries whatever day you pasted.
+2. **Lazy-load per-country / per-sector holdings** — the foreign cards
+   cap each bucket to its top 100 by weight to keep the RSC payload
+   small; if the foreign book grows, fetch the long tail on drill-in
+   instead of shipping it all with the page.
+
+---
+
 ## MF: XIRR + entry-price analysis (per fund + total portfolio)
 
 Requested 2026-07-23, following the NPS XIRR build (`lib/xirr.ts` +

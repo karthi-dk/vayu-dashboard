@@ -51,7 +51,7 @@ export function EquityDebtCard({ split }: { split: AssetSplit | null }) {
         <div>
           <h2 className="text-sm font-semibold text-foreground">Asset Allocation</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Equity vs Debt across MF, NPS &amp; EPF
+            Equity vs Debt across MF, International, NPS &amp; EPF
           </p>
         </div>
         <div className="rounded-md border border-border bg-muted/30 px-2.5 py-1 text-xs font-semibold tabular-nums text-foreground">
@@ -73,6 +73,7 @@ export function EquityDebtCard({ split }: { split: AssetSplit | null }) {
           tooltip={
             <div className="space-y-0.5">
               <Line label="MF equity funds" value={breakdown.mfEquity} />
+              <Line label="International" value={breakdown.intlEquity} />
               <Line label="NPS (Scheme E)" value={breakdown.npsEquity} />
             </div>
           }

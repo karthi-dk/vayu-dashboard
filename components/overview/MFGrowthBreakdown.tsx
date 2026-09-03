@@ -226,8 +226,20 @@ function TooltipRow({
   );
 }
 
-export function MFGrowthBreakdown({ history }: { history: MfDailyRow[] }) {
-  const { range, setRange } = useChartRange(STORAGE_KEY, "ALL");
+export function MFGrowthBreakdown({
+  history,
+  title = "MF · Growth breakdown",
+  noun = "MF",
+  storageKey = STORAGE_KEY,
+  showLedgerTag = true,
+}: {
+  history: MfDailyRow[];
+  title?: string;
+  noun?: string;
+  storageKey?: string;
+  showLedgerTag?: boolean;
+}) {
+  const { range, setRange } = useChartRange(storageKey, "ALL");
 
   // Use ledger deposits when EVERY visible row has it — a mixed window
   // (some ledger, some snapshot) would produce misleading jumps at the
@@ -331,9 +343,9 @@ export function MFGrowthBreakdown({ history }: { history: MfDailyRow[] }) {
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold text-foreground">
-              MF · Growth breakdown
+              {title}
             </h2>
-            {series.length > 1 && useLedger && (
+            {series.length > 1 && useLedger && showLedgerTag && (
               <span
                 className="rounded bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
                 title="Deposits sourced from the MF ledger (Groww orders + MFCentral CAS) — reflects true purchase / redemption events per day"
@@ -372,7 +384,7 @@ export function MFGrowthBreakdown({ history }: { history: MfDailyRow[] }) {
         </div>
       ) : (
         <>
-          <SummaryStrip series={series} />
+          <SummaryStrip series={series} noun={noun} />
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
@@ -578,7 +590,7 @@ function LegendChip({
  * recompute anything — the tail of series[] is by construction the
  * "as of the right edge of the chart" cumulative state.
  */
-function SummaryStrip({ series }: { series: Row[] }) {
+function SummaryStrip({ series, noun }: { series: Row[]; noun: string }) {
   const last = series[series.length - 1];
   const total = last.cumTotal;
   const deposits = last.cumDeposits;
@@ -591,7 +603,7 @@ function SummaryStrip({ series }: { series: Row[] }) {
   return (
     <div className="mb-3">
       <div className="text-xs font-medium text-muted-foreground">
-        Your MF value moved by
+        Your {noun} value moved by
       </div>
       <div className="mt-0.5 flex items-baseline gap-3">
         <div

@@ -22,11 +22,24 @@ import type { PortfolioHeadline as PortfolioHeadlineData } from "@/lib/queries";
  * page — that stuff has its own top-of-Overview treatment.
  */
 export function PortfolioHeadline({ data }: { data: PortfolioHeadlineData }) {
-  const gainPositive = data.gainInr >= 0;
+  // MF hero return (inline). The "Total gain" / "1D" chips below fold in
+  // International so they reconcile with both value heroes shown.
+  const mfGainPositive = data.gainInr >= 0;
+  const mfGainColor = mfGainPositive
+    ? "text-[hsl(var(--success))]"
+    : "text-[hsl(var(--danger))]";
+
+  const totalGainInr = data.totalGainInr ?? data.gainInr;
+  const totalGainPct = data.totalGainPct ?? data.gainPct;
+  const totalInvested = data.totalInvested ?? data.invested;
+  const gainPositive = totalGainInr >= 0;
   const gainColor = gainPositive
     ? "text-[hsl(var(--success))]"
     : "text-[hsl(var(--danger))]";
-  const oneDayPositive = (data.oneDayInr ?? 0) >= 0;
+
+  const oneDayInr = data.totalOneDayInr ?? data.oneDayInr;
+  const oneDayPct = data.totalOneDayPct ?? data.oneDayPct;
+  const oneDayPositive = (oneDayInr ?? 0) >= 0;
   const oneDayColor = oneDayPositive
     ? "text-[hsl(var(--success))]"
     : "text-[hsl(var(--danger))]";
@@ -41,30 +54,58 @@ export function PortfolioHeadline({ data }: { data: PortfolioHeadlineData }) {
             <span className="text-2xl font-bold tabular-nums text-foreground sm:text-3xl">
               {fmtL(data.current)}
             </span>
+            <span
+              className={cn("text-xs font-medium tabular-nums", mfGainColor)}
+            >
+              {fmtPct(data.gainPct, { sign: true })}
+            </span>
             <span className="text-xs text-muted-foreground">
               across {data.fundCount} funds
             </span>
           </div>
         </div>
 
-        {/* Total gain chip */}
+        {/* International — separate asset class shown as a peer hero so the
+            headline reflects everything the allocation donut counts. */}
+        {data.intlValue != null && data.intlValue > 0 && (
+          <div className="flex flex-col">
+            <span className="kicker mb-1">International</span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold tabular-nums text-foreground sm:text-3xl">
+                {fmtL(data.intlValue)}
+              </span>
+              <span
+                className={cn(
+                  "text-xs font-medium tabular-nums",
+                  (data.intlGainInr ?? 0) >= 0
+                    ? "text-[hsl(var(--success))]"
+                    : "text-[hsl(var(--danger))]"
+                )}
+              >
+                {fmtPct(data.intlGainPct ?? 0, { sign: true })}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Total gain chip — MF + International combined */}
         <ChipGroup label="Total gain">
           <div className={cn("flex items-baseline gap-2 tabular-nums", gainColor)}>
             <span className="text-lg font-semibold sm:text-xl">
               {gainPositive ? "+" : ""}
-              {fmtINR(data.gainInr)}
+              {fmtINR(totalGainInr)}
             </span>
             <span className="text-sm font-medium">
-              ({fmtPct(data.gainPct, { sign: true })})
+              ({fmtPct(totalGainPct, { sign: true })})
             </span>
           </div>
           <span className="text-[11px] text-muted-foreground">
-            invested {fmtL(data.invested)}
+            invested {fmtL(totalInvested)}
           </span>
         </ChipGroup>
 
-        {/* 1D change chip — hidden if we don't have a nav_prev baseline yet */}
-        {data.oneDayInr != null && (
+        {/* 1D change chip — MF + International; hidden until a nav_prev baseline exists */}
+        {oneDayInr != null && (
           <ChipGroup label="1D">
             <div
               className={cn(
@@ -74,16 +115,16 @@ export function PortfolioHeadline({ data }: { data: PortfolioHeadlineData }) {
             >
               <span className="text-lg font-semibold sm:text-xl">
                 {oneDayPositive ? "+" : ""}
-                {fmtINR(data.oneDayInr)}
+                {fmtINR(oneDayInr)}
               </span>
-              {data.oneDayPct != null && (
+              {oneDayPct != null && (
                 <span className="text-sm font-medium">
-                  ({fmtPct(data.oneDayPct, { sign: true })})
+                  ({fmtPct(oneDayPct, { sign: true })})
                 </span>
               )}
             </div>
             <span className="text-[11px] text-muted-foreground">
-              from yesterday's close
+              from yesterday&apos;s close
             </span>
           </ChipGroup>
         )}

@@ -8,7 +8,7 @@ import {
 } from "recharts";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { Card } from "@/components/ui/Card";
-import { cn, fmtINR, fmtL } from "@/lib/utils";
+import { cn, fmtDateShort, fmtINR, fmtL } from "@/lib/utils";
 
 export function StatCard({
   label,
@@ -20,6 +20,8 @@ export function StatCard({
   dayChange,
   dayChangeSince,
   dayChangeTitle,
+  navDate,
+  navStaleCount,
 }: {
   label: string;
   meta: string;
@@ -38,6 +40,11 @@ export function StatCard({
   // "Groww 1D returns …" since Groww's oneDayReturnValue is a fund-level
   // NAV-pair delta, not a snapshot-to-snapshot diff.
   dayChangeTitle?: string;
+  // ISO date of the NAV the value + 1D reflect. Rendered as a small muted
+  // "· 18 Aug" after the 1D tag so the "as of" day is explicit.
+  navDate?: string | null;
+  // Funds lagging that NAV date (FoF / intl). Shown as "(N stale)".
+  navStaleCount?: number;
 }) {
   const gradId = `spark-${label.replace(/\s+/g, "-").toLowerCase()}`;
   const changePositive = dayChange ? dayChange.inr >= 0 : true;
@@ -79,13 +86,26 @@ export function StatCard({
               )}
               {changePositive ? "+" : ""}
               {fmtINR(dayChange.inr)}
-              <span className="text-muted-foreground">
+              <span>
                 ({changePositive ? "+" : ""}
                 {dayChange.pct.toFixed(2)}%)
               </span>
               <span className="text-[10px] uppercase text-muted-foreground">
                 1D
               </span>
+              {navDate && (
+                <span className="text-[10px] text-muted-foreground">
+                  · {fmtDateShort(navDate)}
+                  {navStaleCount != null && navStaleCount > 0 && (
+                    <span
+                      className="ml-1 text-[hsl(var(--warning))]"
+                      title={`${navStaleCount} fund(s) haven't published a NAV in several days — beyond the usual T+2 lag for FoF / international funds.`}
+                    >
+                      ({navStaleCount} stale)
+                    </span>
+                  )}
+                </span>
+              )}
             </span>
           )}
         </div>
