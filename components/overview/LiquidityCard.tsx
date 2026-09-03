@@ -72,6 +72,7 @@ export function LiquidityCard({ split }: { split: LiquiditySplit | null }) {
           tooltip={
             <div className="space-y-0.5">
               <Line label="Mutual funds" value={breakdown.mf} />
+              <Line label="International" value={breakdown.intl} />
               <div className="mt-1 text-[10px] text-muted-foreground/70">
                 Sellable any market day · T+1 credit
               </div>

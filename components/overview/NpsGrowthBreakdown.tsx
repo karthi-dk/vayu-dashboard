@@ -14,9 +14,9 @@ import {
 } from "recharts";
 import { Card } from "@/components/ui/Card";
 import { RangeSelector } from "@/components/ui/RangeSelector";
-import { cn, fmtCompactINR } from "@/lib/utils";
+import { cn, fmtCompactINR, fmtL } from "@/lib/utils";
 import { filterByRange, useChartRange } from "@/lib/useChartRange";
-import type { NpsDailyRow } from "@/lib/queries";
+import type { NpsDailyRow, NpsSchemeBreakdownRow } from "@/lib/queries";
 
 /**
  * NPS Growth breakdown — the single visual for the NPS overview.
@@ -217,6 +217,7 @@ function TooltipRow({
 export function NpsGrowthBreakdown({
   history,
   xirr,
+  schemeRows,
 }: {
   history: NpsDailyRow[];
   /**
@@ -228,6 +229,11 @@ export function NpsGrowthBreakdown({
    * recomputed per range-selector click.
    */
   xirr?: number | null;
+  /**
+   * Per-scheme (E/C/G) rows rendered as a text table below the chart
+   * (not a chart of their own). Omitted/empty → the section is hidden.
+   */
+  schemeRows?: NpsSchemeBreakdownRow[];
 }) {
   const { range, setRange } = useChartRange(STORAGE_KEY, "ALL");
 
@@ -539,6 +545,9 @@ export function NpsGrowthBreakdown({
           </div>
         </>
       )}
+      {schemeRows && schemeRows.length > 0 && (
+        <SchemeBreakdownSection rows={schemeRows} totalXirr={xirr} />
+      )}
     </Card>
   );
 }
@@ -568,6 +577,137 @@ function LegendChip({
         />
       )}
       <span className="text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
+const SCHEME_COLOR: Record<"E" | "C" | "G", string> = {
+  E: "hsl(var(--primary))",
+  C: "hsl(var(--success))",
+  G: "hsl(var(--warning))",
+};
+
+/**
+ * Per-scheme (E/C/G) text breakdown folded into the bottom of the Growth
+ * card. Renders as a table (not a chart): % of NPS by value, net invested
+ * cost basis, current value, and a per-scheme XIRR. The whole-corpus XIRR
+ * is already the header badge; it's echoed on the Total row so the sleeve
+ * rates ladder to a familiar anchor. See computeNpsSchemeBreakdown.
+ */
+function SchemeBreakdownSection({
+  rows,
+  totalXirr,
+}: {
+  rows: NpsSchemeBreakdownRow[];
+  totalXirr?: number | null;
+}) {
+  const totalValue = rows.reduce((s, r) => s + r.value, 0);
+  const totalInvested = rows.reduce((s, r) => s + r.invested, 0);
+
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <h3 className="text-xs font-semibold text-foreground">Scheme split</h3>
+      <p className="mt-0.5 text-[11px] text-muted-foreground">
+        Invested &amp; return per asset class · Tier I
+      </p>
+
+      {/* Value-share bar (E · C · G). A static split bar, not a chart —
+          min-width keeps the thin Govt sliver visible. */}
+      <div
+        className="my-3 flex h-2 w-full overflow-hidden rounded-full bg-muted/40"
+        aria-hidden
+      >
+        {rows.map((r) => (
+          <div
+            key={r.scheme}
+            className="h-full"
+            style={{
+              width: `${Math.max(r.splitPct, 0.5)}%`,
+              background: SCHEME_COLOR[r.scheme],
+            }}
+          />
+        ))}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              <th className="pb-2 text-left font-medium">Scheme</th>
+              <th className="pb-2 text-right font-medium">% of NPS</th>
+              <th className="pb-2 text-right font-medium">Invested</th>
+              <th className="pb-2 text-right font-medium">Value</th>
+              <th className="pb-2 text-right font-medium">XIRR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.scheme} className="border-t border-border/60">
+                <td className="py-2">
+                  <div className="flex items-center gap-2">
+                    <span
+                      aria-hidden
+                      className="inline-block h-2.5 w-2.5 rounded-sm"
+                      style={{ background: SCHEME_COLOR[r.scheme] }}
+                    />
+                    <span className="font-medium text-foreground">
+                      {r.scheme}
+                    </span>
+                    <span className="text-muted-foreground">{r.label}</span>
+                  </div>
+                </td>
+                <td className="py-2 text-right tabular-nums text-muted-foreground">
+                  {r.splitPct.toFixed(1)}%
+                </td>
+                <td className="py-2 text-right tabular-nums text-muted-foreground">
+                  {fmtL(r.invested)}
+                </td>
+                <td className="py-2 text-right font-medium tabular-nums text-foreground">
+                  {fmtL(r.value)}
+                </td>
+                <td className="py-2 text-right">
+                  {r.xirr == null ? (
+                    <span className="text-muted-foreground/60">—</span>
+                  ) : (
+                    <span
+                      className={
+                        r.xirr >= 0
+                          ? "font-semibold tabular-nums text-[hsl(var(--success))]"
+                          : "font-semibold tabular-nums text-[hsl(var(--danger))]"
+                      }
+                    >
+                      {r.xirr >= 0 ? "+" : ""}
+                      {(r.xirr * 100).toFixed(2)}%
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+            <tr className="border-t border-border">
+              <td className="py-2 font-semibold text-foreground">Total</td>
+              <td className="py-2 text-right tabular-nums text-muted-foreground">
+                100%
+              </td>
+              <td className="py-2 text-right font-semibold tabular-nums text-foreground">
+                {fmtL(totalInvested)}
+              </td>
+              <td className="py-2 text-right font-semibold tabular-nums text-foreground">
+                {fmtL(totalValue)}
+              </td>
+              <td className="py-2 text-right tabular-nums text-muted-foreground">
+                {totalXirr == null ? "—" : `${(totalXirr * 100).toFixed(2)}%`}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+        Invested is the net cost basis in each sleeve (contributions plus any
+        inter-scheme switch value in, minus switched out). Per-scheme XIRR
+        counts switches as real flows, so the sleeve rates don&apos;t
+        value-weight into the whole-corpus XIRR above.
+      </p>
     </div>
   );
 }

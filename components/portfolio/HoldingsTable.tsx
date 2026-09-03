@@ -15,7 +15,6 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "large", label: "Large" },
   { key: "mid", label: "Mid" },
   { key: "small", label: "Small" },
-  { key: "intl", label: "Intl" },
   { key: "debt", label: "Debt" },
 ];
 

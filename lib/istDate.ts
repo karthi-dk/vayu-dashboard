@@ -36,3 +36,17 @@ export function istDate(now: Date = new Date()): string {
     day: "2-digit",
   }).format(now);
 }
+
+/**
+ * The previous business day (Mon–Fri) before `iso` (an IST YYYY-MM-DD),
+ * returned as YYYY-MM-DD. Skips weekends only, not holidays. Used to roll a
+ * source-reported NAV date back to the true valuation day when a feed stamps
+ * a freshly-published NAV with the fetch day — see refresh-nps-nav.
+ */
+export function previousBusinessDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  do {
+    d.setUTCDate(d.getUTCDate() - 1);
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  return d.toISOString().slice(0, 10);
+}

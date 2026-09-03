@@ -15,7 +15,7 @@ import { Card } from "@/components/ui/Card";
 import { RangeSelector } from "@/components/ui/RangeSelector";
 import { cn, fmtCompactINR } from "@/lib/utils";
 import { filterByRange, useChartRange } from "@/lib/useChartRange";
-import type { EpfDailyRow } from "@/lib/epf/epfHistory";
+import { EPF_XIRR_PCT, type EpfDailyRow } from "@/lib/epf/epfHistory";
 
 /**
  * EPF · Growth breakdown — the EPF analogue of NpsGrowthBreakdown /
@@ -239,6 +239,14 @@ export function EpfGrowthBreakdown({ history }: { history: EpfDailyRow[] }) {
             <h2 className="text-sm font-semibold text-foreground">
               EPF · Growth breakdown
             </h2>
+            {EPF_XIRR_PCT != null && (
+              <span
+                className="rounded bg-[hsl(var(--primary)/0.15)] px-1.5 py-0.5 text-[10px] font-semibold text-[hsl(var(--primary))]"
+                title="Money-weighted return (XIRR) across every EPF contribution + today's balance. EPF posts interest once a year (31 Mar), so a mid-year figure understates the declared rate and steps up at each financial-year end."
+              >
+                XIRR {EPF_XIRR_PCT.toFixed(2)}%
+              </span>
+            )}
             <span
               className="rounded bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
               title="Reconstructed from your EPFO member passbooks (employee + employer shares; Pension/EPS excluded). Interest is credited annually at each financial-year end."
@@ -334,7 +342,7 @@ export function EpfGrowthBreakdown({ history }: { history: EpfDailyRow[] }) {
                   }}
                 />
                 <Area
-                  type="monotone"
+                  type="stepAfter"
                   dataKey="cumContributions"
                   stackId="1"
                   stroke="hsl(var(--primary))"
@@ -343,7 +351,7 @@ export function EpfGrowthBreakdown({ history }: { history: EpfDailyRow[] }) {
                   isAnimationActive={false}
                 />
                 <Area
-                  type="monotone"
+                  type="stepAfter"
                   dataKey="cumInterest"
                   stackId="1"
                   stroke="hsl(var(--success))"
@@ -352,7 +360,7 @@ export function EpfGrowthBreakdown({ history }: { history: EpfDailyRow[] }) {
                   isAnimationActive={false}
                 />
                 <Line
-                  type="monotone"
+                  type="stepAfter"
                   dataKey="cumTotal"
                   stroke="hsl(var(--foreground))"
                   strokeWidth={1.75}

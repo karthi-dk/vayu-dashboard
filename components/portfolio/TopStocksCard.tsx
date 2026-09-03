@@ -59,7 +59,7 @@ export function TopStocksCard({ stocks }: { stocks: LookthroughStock[] }) {
         <p className="mt-2 text-xs text-muted-foreground">
           No look-through data yet. Populate{" "}
           <code className="font-mono">fund_holdings_detail</code> via the
-          Sync page's Fetch fund holdings section.
+          Sync page&apos;s Fetch fund holdings section.
         </p>
       </Card>
     );

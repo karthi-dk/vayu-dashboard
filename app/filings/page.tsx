@@ -101,7 +101,7 @@ function EmptyState({ stale }: { stale: boolean }) {
       </ol>
       <p className="mt-4 text-xs text-muted-foreground">
         The script is idempotent — safe to re-run after adding next
-        year's ITR JSON to the folder. It reads ITR-1 forms; extend
+        year&apos;s ITR JSON to the folder. It reads ITR-1 forms; extend
         the parser in <code className="font-mono">scripts/ingest-itr-json.ts</code>{" "}
         when you need ITR-2 support.
       </p>

@@ -1,5 +1,6 @@
 import { GrowwPasteCard } from "@/components/sync/GrowwPasteCard";
 import { FundResyncGrid } from "@/components/sync/FundResyncGrid";
+import { IntlHoldingsPasteCard } from "@/components/sync/IntlHoldingsPasteCard";
 import { RefreshNavsCard } from "@/components/sync/RefreshNavsCard";
 import { PasteCasCard } from "@/components/sync/PasteCasCard";
 import { CapClassificationCard } from "@/components/sync/CapClassificationCard";
@@ -10,7 +11,7 @@ import { RefreshIndexLevelsCard } from "@/components/sync/RefreshIndexLevelsCard
 import { DeleteStudioTestDataCard } from "@/components/sync/DeleteStudioTestDataCard";
 import { TimeAgo } from "@/components/ui/TimeAgo";
 import { getSyncData } from "@/lib/queries";
-import { withTransientRetry } from "@/lib/transientRetry";
+import { isTransientJwtFutureError, withTransientRetry } from "@/lib/transientRetry";
 import { sbServer } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,7 @@ export default async function SyncPage() {
     totalDetailRows,
     fundResync,
     mf,
+    intl,
     nps,
     capClassification,
     epfState,
@@ -29,11 +31,18 @@ export default async function SyncPage() {
     indexLevels,
   } = await withTransientRetry(() => getSyncData());
 
-  const testCountRes = await sbServer
-    .from("mf_transactions")
-    .select("id", { count: "exact", head: true })
-    .eq("platform", "test");
-  const testTxCount = testCountRes.count ?? 0;
+  // Second read lives outside getSyncData, so guard it with the same
+  // clock-skew retry. Skew-tolerant like the rest of the page: retry ONLY
+  // the transient JWT-future error, otherwise keep the prior behavior of
+  // rendering with 0 rather than crashing on this non-critical count.
+  const testTxCount = await withTransientRetry(async () => {
+    const res = await sbServer
+      .from("mf_transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("platform", "test");
+    if (isTransientJwtFutureError(res.error)) throw res.error;
+    return res.count ?? 0;
+  });
 
   return (
     <div className="flex flex-col gap-8">
@@ -50,7 +59,7 @@ export default async function SyncPage() {
         </p>
       </div>
 
-      <RefreshNavsCard mf={mf} nps={nps} indexLevels={indexLevels} />
+      <RefreshNavsCard mf={mf} intl={intl} nps={nps} indexLevels={indexLevels} />
       <GrowwPasteCard lastSync={lastSync} />
       {/* MF transaction logger — primary path for new orders. Handles
           both INDmoney bulk-list JSON (autofills fund/date/units/NAV,
@@ -78,6 +87,7 @@ export default async function SyncPage() {
       <PasteCasCard />
       <CapClassificationCard data={capClassification} />
       <FundResyncGrid funds={fundResync} />
+      <IntlHoldingsPasteCard />
     </div>
   );
 }

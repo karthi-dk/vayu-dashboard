@@ -107,7 +107,7 @@ async function main() {
 
   const [funds, nps, epf, existing] = await Promise.all([
     sbGet(
-      "fund_holdings?select=current_value_inr,invested_inr,cap_type,one_day_change_inr"
+      "fund_holdings?select=current_value_inr,invested_inr,cap_type,one_day_change_inr,asset_class"
     ),
     sbGet(
       "nps_state?select=scheme_e_units,scheme_c_units,scheme_g_units,scheme_e_nav,scheme_c_nav,scheme_g_nav,scheme_e_nav_prev,scheme_c_nav_prev,scheme_g_nav_prev&id=eq.1"
@@ -118,18 +118,30 @@ async function main() {
     sbGet(`nw_daily?select=*&date=eq.${today}`),
   ]);
 
-  const mfValue = funds.reduce(
+  // International (asset_class='intl') is a separate top-level asset class —
+  // split so mf_* and intl_* never double-count. Mirrors lib/recomputeNwDaily.ts.
+  const mfRows = funds.filter((f) => f.asset_class !== "intl");
+  const intlRows = funds.filter((f) => f.asset_class === "intl");
+  const mfValue = mfRows.reduce(
     (s, f) => s + Number(f.current_value_inr ?? 0),
     0
   );
-  const mfInvested = funds.reduce(
+  const mfInvested = mfRows.reduce(
     (s, f) => s + Number(f.invested_inr ?? 0),
     0
   );
-  const mfEquity = funds
+  const intlValue = intlRows.reduce(
+    (s, f) => s + Number(f.current_value_inr ?? 0),
+    0
+  );
+  const intlInvested = intlRows.reduce(
+    (s, f) => s + Number(f.invested_inr ?? 0),
+    0
+  );
+  const mfEquity = mfRows
     .filter((f) => (f.cap_type ?? "large") !== "debt")
     .reduce((s, f) => s + Number(f.current_value_inr ?? 0), 0);
-  const mfDebt = funds
+  const mfDebt = mfRows
     .filter((f) => f.cap_type === "debt")
     .reduce((s, f) => s + Number(f.current_value_inr ?? 0), 0);
 
@@ -145,18 +157,30 @@ async function main() {
     ? Number(epfRow.balance_inr) + Number(epfRow.fy_interest_pending_inr ?? 0)
     : 0;
 
-  const totalNw = mfValue + npsValue + epfEstimate;
+  const totalNw = mfValue + npsValue + epfEstimate + intlValue;
   const mfGainPct =
     mfInvested > 0 ? ((mfValue - mfInvested) / mfInvested) * 100 : 0;
+  const intlGainPct =
+    intlInvested > 0 ? ((intlValue - intlInvested) / intlInvested) * 100 : 0;
 
-  // MF 1D derivation — same guards as lib/recomputeNwDaily.ts
-  const hasAnyFund1D = funds.some((f) => f.one_day_change_inr != null);
+  // MF 1D derivation — same guards as lib/recomputeNwDaily.ts (MF rows only)
+  const hasAnyFund1D = mfRows.some((f) => f.one_day_change_inr != null);
   const derivedMf1dInr = hasAnyFund1D
-    ? funds.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
+    ? mfRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
     : null;
   const derivedMf1dPct =
     derivedMf1dInr != null && mfValue - derivedMf1dInr > 0
       ? (derivedMf1dInr / (mfValue - derivedMf1dInr)) * 100
+      : null;
+
+  // International 1D — Σ one_day_change_inr over intl rows.
+  const hasAnyIntl1D = intlRows.some((f) => f.one_day_change_inr != null);
+  const derivedIntl1dInr = hasAnyIntl1D
+    ? intlRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
+    : null;
+  const derivedIntl1dPct =
+    derivedIntl1dInr != null && intlValue - derivedIntl1dInr > 0
+      ? (derivedIntl1dInr / (intlValue - derivedIntl1dInr)) * 100
       : null;
 
   // NPS 1D derivation — same guards as lib/recomputeNwDaily.ts
@@ -190,6 +214,9 @@ async function main() {
     mf_debt_inr: Number(mfDebt.toFixed(2)),
     nps_value: Number(npsValue.toFixed(2)),
     epf_estimate: Number(epfEstimate.toFixed(2)),
+    intl_value: Number(intlValue.toFixed(2)),
+    intl_invested: Number(intlInvested.toFixed(2)),
+    intl_gain_pct: Number(intlGainPct.toFixed(2)),
     total_nw: Number(totalNw.toFixed(2)),
     mf_gain_pct: Number(mfGainPct.toFixed(2)),
   };
@@ -197,6 +224,8 @@ async function main() {
   if (derivedMf1dPct != null) row.mf_1d_change_pct = Number(derivedMf1dPct.toFixed(4));
   if (derivedNps1dInr != null) row.nps_1d_change_inr = Number(derivedNps1dInr.toFixed(2));
   if (derivedNps1dPct != null) row.nps_1d_change_pct = Number(derivedNps1dPct.toFixed(4));
+  if (derivedIntl1dInr != null) row.intl_1d_change_inr = Number(derivedIntl1dInr.toFixed(2));
+  if (derivedIntl1dPct != null) row.intl_1d_change_pct = Number(derivedIntl1dPct.toFixed(4));
 
   const before = existing[0];
   console.log("\n── Existing today row (before) ──");
@@ -222,6 +251,8 @@ async function main() {
 
   console.log("\n── Proposed row (after) ──");
   console.log(`  mf_value          ${fmtInr(row.mf_value)}`);
+  console.log(`  intl_value        ${fmtInr(row.intl_value)}`);
+  console.log(`  total_nw          ${fmtInr(row.total_nw)}`);
   console.log(`  mf_invested       ${fmtInr(row.mf_invested)}`);
   console.log(
     `  mf_1d_change_inr  ${row.mf_1d_change_inr == null ? "(unchanged / not derived)" : fmtInr(row.mf_1d_change_inr)}`

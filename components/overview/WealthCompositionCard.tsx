@@ -75,6 +75,7 @@ export function WealthCompositionCard({
       <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
         <BucketDonut bucket={composition.nw} />
         <BucketDonut bucket={composition.mf} />
+        {composition.intl && <BucketDonut bucket={composition.intl} />}
         <BucketDonut bucket={composition.nps} />
         <BucketDonut bucket={composition.epf} />
       </div>

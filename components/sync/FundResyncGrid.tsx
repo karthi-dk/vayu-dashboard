@@ -5,6 +5,7 @@ import { useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  Globe,
   Loader2,
   RefreshCw,
 } from "lucide-react";
@@ -35,6 +36,19 @@ function StateBadge({ f, override }: { f: FundResyncStatus; override?: FundResyn
       <span className="inline-flex items-center gap-1 rounded-md bg-[hsl(var(--warning)/0.2)] px-2 py-0.5 text-[10px] font-semibold text-[hsl(var(--warning))]">
         <AlertTriangle size={9} />
         Low coverage
+      </span>
+    );
+  }
+  if (state === "na") {
+    // Foreign funds (GIFT-City / feeder) have no Dhan constituent
+    // disclosure, so look-through simply doesn't apply — not an error.
+    return (
+      <span
+        title="Foreign fund — Dhan doesn't disclose constituents, so look-through isn't tracked."
+        className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+      >
+        <Globe size={9} />
+        No look-through
       </span>
     );
   }
@@ -92,15 +106,17 @@ export function FundResyncGrid({ funds }: { funds: FundResyncStatus[] }) {
     // fan-out is ~2-3s total vs ~15s sequential. If Dhan ever rate-limits,
     // switch to `for` loop with `await` for sequential behavior.
     setBulkRunning(true);
-    setBulkSummary({ done: 0, total: funds.length, failed: 0 });
+    // Foreign funds (currency USD) have no Dhan look-through to pull — skip them.
+    const targets = funds.filter((f) => f.currency !== "USD");
+    setBulkSummary({ done: 0, total: targets.length, failed: 0 });
     let done = 0;
     let failed = 0;
     await Promise.all(
-      funds.map(async (f) => {
+      targets.map(async (f) => {
         const r = await resyncOne(f);
         done += 1;
         if (!r.ok) failed += 1;
-        setBulkSummary({ done, total: funds.length, failed });
+        setBulkSummary({ done, total: targets.length, failed });
       })
     );
     setBulkRunning(false);
@@ -246,14 +262,19 @@ export function FundResyncGrid({ funds }: { funds: FundResyncStatus[] }) {
                     e.stopPropagation();
                     resync(f);
                   }}
-                  disabled={b || bulkRunning}
+                  disabled={b || bulkRunning || f.currency === "USD"}
+                  title={
+                    f.currency === "USD"
+                      ? "Foreign fund — refreshed via the International holdings ingest, not Dhan."
+                      : undefined
+                  }
                 >
                   {b ? (
                     <Loader2 size={12} className="animate-spin" />
                   ) : (
                     <RefreshCw size={12} />
                   )}
-                  {b ? "Resyncing…" : "Resync now"}
+                  {b ? "Resyncing…" : f.currency === "USD" ? "Resync N/A" : "Resync now"}
                 </Button>
               </div>
             </div>

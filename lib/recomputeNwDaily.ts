@@ -94,7 +94,7 @@ export async function recomputeNwDaily(overrides?: {
     sbServer
       .from("fund_holdings")
       .select(
-        "current_value_inr, invested_inr, cap_type, one_day_change_inr"
+        "current_value_inr, invested_inr, cap_type, one_day_change_inr, asset_class"
       ),
     sbServer
       .from("nps_state")
@@ -115,23 +115,37 @@ export async function recomputeNwDaily(overrides?: {
     invested_inr: number | null;
     cap_type: string | null;
     one_day_change_inr: number | null;
+    asset_class: string | null;
   }>;
-  const mfValue = fundRows.reduce(
+  // International (asset_class='intl') is a top-level asset class, NOT part
+  // of the MF slice — split so mf_* and intl_* never double-count.
+  const mfRows = fundRows.filter((f) => f.asset_class !== "intl");
+  const intlRows = fundRows.filter((f) => f.asset_class === "intl");
+
+  const mfValue = mfRows.reduce(
     (s, f) => s + Number(f.current_value_inr ?? 0),
     0
   );
-  const mfInvested = fundRows.reduce(
+  const mfInvested = mfRows.reduce(
+    (s, f) => s + Number(f.invested_inr ?? 0),
+    0
+  );
+  const intlValue = intlRows.reduce(
+    (s, f) => s + Number(f.current_value_inr ?? 0),
+    0
+  );
+  const intlInvested = intlRows.reduce(
     (s, f) => s + Number(f.invested_inr ?? 0),
     0
   );
   // Equity/Debt breakdown — same classification rule as the Overview card
   // (cap_type='debt' → Debt, everything else → Equity). Null cap_type is
   // treated as equity for safety: a mis-tagged fund shouldn't silently
-  // flip to debt and corrupt the split.
-  const mfEquity = fundRows
+  // flip to debt and corrupt the split. MF slice only — intl is excluded.
+  const mfEquity = mfRows
     .filter((f) => (f.cap_type ?? "large") !== "debt")
     .reduce((s, f) => s + Number(f.current_value_inr ?? 0), 0);
-  const mfDebt = fundRows
+  const mfDebt = mfRows
     .filter((f) => f.cap_type === "debt")
     .reduce((s, f) => s + Number(f.current_value_inr ?? 0), 0);
 
@@ -160,8 +174,10 @@ export async function recomputeNwDaily(overrides?: {
     ? Number(epfRow.balance_inr) + Number(epfRow.fy_interest_pending_inr ?? 0)
     : 0;
 
-  const totalNw = mfValue + npsValue + epfEstimate;
+  const totalNw = mfValue + npsValue + epfEstimate + intlValue;
   const mfGainPct = mfInvested > 0 ? ((mfValue - mfInvested) / mfInvested) * 100 : 0;
+  const intlGainPct =
+    intlInvested > 0 ? ((intlValue - intlInvested) / intlInvested) * 100 : 0;
 
   const today = istDate();
   // Build the upsert payload — only include 1D fields when a valid number
@@ -180,6 +196,9 @@ export async function recomputeNwDaily(overrides?: {
     epf_estimate: Number(epfEstimate.toFixed(2)),
     total_nw: Number(totalNw.toFixed(2)),
     mf_gain_pct: Number(mfGainPct.toFixed(2)),
+    intl_value: Number(intlValue.toFixed(2)),
+    intl_invested: Number(intlInvested.toFixed(2)),
+    intl_gain_pct: Number(intlGainPct.toFixed(2)),
   };
   // MF 1D — prefer explicit override (refresh-mf-nav's post-rotation
   // sum), else derive from fund_holdings.one_day_change_inr.
@@ -196,9 +215,9 @@ export async function recomputeNwDaily(overrides?: {
   //   • pct = INR / (current_total − INR) × 100
   //         = INR / prev_value  where prev_value is the units-held-today
   //           value at the last-known previous NAV per fund
-  const hasAnyFund1D = fundRows.some((f) => f.one_day_change_inr != null);
+  const hasAnyFund1D = mfRows.some((f) => f.one_day_change_inr != null);
   const derivedMf1dInr = hasAnyFund1D
-    ? fundRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
+    ? mfRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
     : null;
   const derivedMf1dPct =
     derivedMf1dInr != null && mfValue - derivedMf1dInr > 0
@@ -222,6 +241,24 @@ export async function recomputeNwDaily(overrides?: {
     row.mf_1d_change_pct = Number(overrides.mf_1d_change_pct.toFixed(4));
   } else if (derivedMf1dPct != null) {
     row.mf_1d_change_pct = Number(derivedMf1dPct.toFixed(4));
+  }
+  // International 1D — derived from Σ fund_holdings.one_day_change_inr over
+  // asset_class='intl' (ICICI's AMFI refresh and HDFC's USD route each stamp
+  // it on their own row). Same null-guard + pct formula as the MF slice; no
+  // override path since two different routes feed the intl rows.
+  const hasAnyIntl1D = intlRows.some((f) => f.one_day_change_inr != null);
+  const derivedIntl1dInr = hasAnyIntl1D
+    ? intlRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
+    : null;
+  const derivedIntl1dPct =
+    derivedIntl1dInr != null && intlValue - derivedIntl1dInr > 0
+      ? (derivedIntl1dInr / (intlValue - derivedIntl1dInr)) * 100
+      : null;
+  if (derivedIntl1dInr != null) {
+    row.intl_1d_change_inr = Number(derivedIntl1dInr.toFixed(2));
+  }
+  if (derivedIntl1dPct != null) {
+    row.intl_1d_change_pct = Number(derivedIntl1dPct.toFixed(4));
   }
   // NPS 1D — prefer explicit override (refresh-nps-nav's per-rotation
   // number), else derive from nps_state using the same formula:

@@ -1,7 +1,7 @@
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn, fmtDateShort, fmtINR, splitL } from "@/lib/utils";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { NwDeltasStrip } from "@/components/overview/NwDeltasStrip";
+import { NwDeltasCards } from "@/components/overview/NwDeltasCards";
 import type { NwDelta, NwRow, RetirementCredit } from "@/lib/queries";
 
 export function HeadlineNW({
@@ -72,6 +72,15 @@ export function HeadlineNW({
       : prev
         ? latest.nps_value - prev.nps_value
         : 0;
+  // International 1D — stored intl_1d_change_inr (Σ intl one_day_change_inr,
+  // deposit-immune), else snapshot diff of intl_value.
+  const intlChipInr = latest.intl_1d_change_inr;
+  const intlComponent =
+    intlChipInr != null
+      ? intlChipInr
+      : prev
+        ? (latest.intl_value ?? 0) - (prev.intl_value ?? 0)
+        : 0;
   const epfComponent =
     prev != null
       ? credits
@@ -85,8 +94,8 @@ export function HeadlineNW({
           .reduce((sum, c) => sum + Number(c.amount_inr), 0)
       : 0;
   const deltaInr: number | null =
-    prev || mfChipInr != null || npsChipInr != null
-      ? mfComponent + npsComponent + epfComponent
+    prev || mfChipInr != null || npsChipInr != null || intlChipInr != null
+      ? mfComponent + npsComponent + epfComponent + intlComponent
       : null;
   // Percentage denominator: use total_nw as the base since deltaInr sums
   // across all three components. When prev is null (first snapshot ever
@@ -122,7 +131,7 @@ export function HeadlineNW({
           <Tooltip
             content={
               mfChipInr != null
-                ? `Change since ${prevDateLabel ?? "prev"}: MF (Groww 1D) + NPS 1D + EPF interest — deposit-immune, so payroll/contributions never count as growth. EPF only moves here when interest is credited.`
+                ? `Change since ${prevDateLabel ?? "prev"}: MF (Groww 1D) + International + NPS 1D + EPF interest — deposit-immune, so payroll/contributions never count as growth. EPF only moves here when interest is credited.`
                 : `Sum of snapshot diffs since ${prevDateLabel ?? "prev"}. MF will switch to Groww's 1D after next sync.`
             }
           >
@@ -151,7 +160,7 @@ export function HeadlineNW({
           </Tooltip>
         )}
       </div>
-      <NwDeltasStrip deltas={deltas} />
+      <NwDeltasCards deltas={deltas} />
       <p className="kicker mt-3">
         As of {asOfLabel}
         {!prev && (

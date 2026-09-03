@@ -1239,7 +1239,7 @@ function BulkReviewTable({
       </div>
       <div className="flex items-center justify-between gap-3 border-t border-border/60 px-2 py-2">
         <span className="text-[10px] text-muted-foreground">
-          Amount is editable — INDmoney's abbreviated total and the units×NAV
+          Amount is editable — INDmoney&apos;s abbreviated total and the units×NAV
           figure can both drift a few paise from the real net amount; confirm
           before logging.
         </span>

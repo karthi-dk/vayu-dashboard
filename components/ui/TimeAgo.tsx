@@ -32,9 +32,20 @@ export function TimeAgo({ isoDate, className }: Props) {
 
   useEffect(() => {
     if (!isoDate) return;
+    // Correct to the client clock right after hydration (server HTML can be
+    // a tick stale), then keep the label fresh every 30s.
+    forceRender((n) => n + 1);
     const id = setInterval(() => forceRender((n) => n + 1), 30_000);
     return () => clearInterval(id);
   }, [isoDate]);
 
-  return <span className={className}>{timeAgo(isoDate)}</span>;
+  // Relative label derives from Date.now(), so the SSR text and the first
+  // client render can differ by a tick ("55m" vs "56m"). suppressHydrationWarning
+  // marks that text-only delta as expected — without it the mismatch aborts
+  // hydration and cascades into null-parentNode errors.
+  return (
+    <span className={className} suppressHydrationWarning>
+      {timeAgo(isoDate)}
+    </span>
+  );
 }

@@ -108,7 +108,7 @@ export function NpsContribCard({ nps }: { nps: NpsState | null }) {
               ? `${nps.alloc_e_pct}:${nps.alloc_c_pct}:${nps.alloc_g_pct}`
               : "—"}
           </span>{" "}
-          using the day's current NAV
+          using the day&apos;s current NAV
         </div>
 
         {saveFeedback && (
