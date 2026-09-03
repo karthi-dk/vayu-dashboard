@@ -36,7 +36,7 @@ function DeltaChip({ delta }: { delta: NwDelta }) {
       <div className="mt-1 tabular-nums">
         {positive ? "+" : ""}
         {fmtCompactINR(delta.deltaInr)} · {positive ? "+" : ""}
-        {delta.deltaPct.toFixed(2)}%
+        {delta.returnPct != null ? delta.returnPct.toFixed(2) : "—"}%
       </div>
     </div>
   );
@@ -58,7 +58,7 @@ function DeltaChip({ delta }: { delta: NwDelta }) {
         </span>
         <span className="text-[10px] text-muted-foreground/80">
           {positive ? "+" : ""}
-          {delta.deltaPct.toFixed(1)}%
+          {delta.returnPct != null ? delta.returnPct.toFixed(1) : "—"}%
         </span>
       </span>
     </Tooltip>
