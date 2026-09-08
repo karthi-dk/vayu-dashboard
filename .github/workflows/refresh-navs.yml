@@ -1,0 +1,29 @@
+name: Refresh NAVs
+
+on:
+  schedule:
+    # Every day at 6:30 PM IST (13:00 UTC) — after market close
+    - cron: '0 13 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh MF NAV
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/refresh-mf-nav"
+
+      - name: Refresh NPS NAV
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/refresh-nps-nav"
+
+      - name: Refresh HDFC Intl NAV
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/refresh-hdfc-intl-nav"

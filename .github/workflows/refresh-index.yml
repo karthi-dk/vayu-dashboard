@@ -1,0 +1,17 @@
+name: Refresh Index Levels
+
+on:
+  schedule:
+    # Every day at 6:30 PM IST (13:00 UTC) — after market close
+    - cron: '10 13 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh Index Levels
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/refresh-index-levels"
