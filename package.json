@@ -1,6 +1,6 @@
 {
   "name": "vayu-dashboard",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Personal portfolio dashboard — Next.js 15, wired to Supabase",
   "scripts": {

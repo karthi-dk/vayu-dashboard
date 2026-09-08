@@ -15,6 +15,30 @@ at push time).
 - Flip `SHOW_STUDIO_REPLAY` off in `RevealDashboard.tsx` when recording /
   choreography tuning is done.
 
+## [0.3.1] — 2026-09-08
+
+### Added
+
+- **Automated NAV refresh (GitHub Actions)** — MF / NPS / International
+  NAVs now refresh every 3 hours and index levels hourly during market
+  hours (9am–4pm IST, Mon–Fri), via two scheduled workflows that call the
+  refresh routes with a `CRON_SECRET` bearer token. `middleware.ts`
+  allow-lists that token for the refresh routes only (fail-closed if the
+  secret is unset). Removes the reliance on opening the app to update NAVs.
+
+### Fixed
+
+- **1D change no longer double-counts a stalled fund** — the Overview MF
+  card, the Portfolio headline, and the persisted `nw_daily` 1D now sum
+  only funds priced at the headline NAV date, over that same fresh base.
+  A fund still pending its NAV (e.g. PPFAS mid-morning) can no longer
+  inject a frozen prior-day delta or dilute the %, so the card, the
+  “(N stale)” pill, and the Total-NW headline reconcile.
+- **International 1D stops repeating a frozen value** — when the freshest
+  overseas NAV is several days old the card shows “— 1D · {date} (stale)”
+  instead of carrying the last move forward indefinitely; the stored
+  `intl_1d_change_inr` is cleared to match.
+
 ## [0.3.0] — 2026-09-03
 
 ### Added
@@ -225,7 +249,8 @@ commit trail.
 
 ---
 
-[Unreleased]: https://github.com/karthi-dk/vayu-dashboard/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/karthi-dk/vayu-dashboard/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/karthi-dk/vayu-dashboard/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/karthi-dk/vayu-dashboard/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/karthi-dk/vayu-dashboard/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/karthi-dk/vayu-dashboard/releases/tag/v0.1.0

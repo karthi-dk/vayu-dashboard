@@ -1,6 +1,35 @@
 import { sbServer } from "./supabase";
 import { istDate } from "./istDate";
 
+// Intl funds (FoF / UCITS feeders) publish sparsely + lag; when even the
+// freshest intl NAV is more than this many days behind today, the stored 1D
+// would just repeat a frozen delta, so we clear it instead.
+const INTL_ONE_DAY_MAX_LAG_DAYS = 3;
+
+function dayGapDays(a: string, b: string): number {
+  return Math.round(
+    (Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000
+  );
+}
+
+// Most common nav_date across rows (tiebreak: most recent). The headline
+// "as of" date; a fund lagging it is treated as not-yet-priced for 1D.
+function mostCommonNavDate(
+  rows: Array<{ nav_date: string | null }>
+): string | null {
+  const freq = new Map<string, number>();
+  for (const r of rows)
+    if (r.nav_date) freq.set(r.nav_date, (freq.get(r.nav_date) ?? 0) + 1);
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [d, c] of freq)
+    if (c > bestCount || (c === bestCount && (best === null || d > best))) {
+      best = d;
+      bestCount = c;
+    }
+  return best;
+}
+
 /**
  * Recompute and upsert today's row in nw_daily.
  *
@@ -94,7 +123,7 @@ export async function recomputeNwDaily(overrides?: {
     sbServer
       .from("fund_holdings")
       .select(
-        "current_value_inr, invested_inr, cap_type, one_day_change_inr, asset_class"
+        "current_value_inr, invested_inr, cap_type, one_day_change_inr, asset_class, nav_date"
       ),
     sbServer
       .from("nps_state")
@@ -116,6 +145,7 @@ export async function recomputeNwDaily(overrides?: {
     cap_type: string | null;
     one_day_change_inr: number | null;
     asset_class: string | null;
+    nav_date: string | null;
   }>;
   // International (asset_class='intl') is a top-level asset class, NOT part
   // of the MF slice — split so mf_* and intl_* never double-count.
@@ -215,13 +245,26 @@ export async function recomputeNwDaily(overrides?: {
   //   • pct = INR / (current_total − INR) × 100
   //         = INR / prev_value  where prev_value is the units-held-today
   //           value at the last-known previous NAV per fund
-  const hasAnyFund1D = mfRows.some((f) => f.one_day_change_inr != null);
-  const derivedMf1dInr = hasAnyFund1D
-    ? mfRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
+  // Stale-aware: 1D counts only funds priced at the headline nav_date, over
+  // that same fresh base. A fund still pending its NAV carries a frozen
+  // prior-day delta — folding it in injects a wrong-day move and dilutes the
+  // % against its full value. Matches getOverviewData + the "(N stale)" pill.
+  const mfHeadlineNavDate = mostCommonNavDate(mfRows);
+  const mfFreshRows = mfHeadlineNavDate
+    ? mfRows.filter(
+        (f) => f.nav_date === mfHeadlineNavDate && f.one_day_change_inr != null
+      )
+    : mfRows.filter((f) => f.one_day_change_inr != null);
+  const mfFreshValue = mfFreshRows.reduce(
+    (s, f) => s + Number(f.current_value_inr ?? 0),
+    0
+  );
+  const derivedMf1dInr = mfFreshRows.length
+    ? mfFreshRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
     : null;
   const derivedMf1dPct =
-    derivedMf1dInr != null && mfValue - derivedMf1dInr > 0
-      ? (derivedMf1dInr / (mfValue - derivedMf1dInr)) * 100
+    derivedMf1dInr != null && mfFreshValue - derivedMf1dInr > 0
+      ? (derivedMf1dInr / (mfFreshValue - derivedMf1dInr)) * 100
       : null;
 
   if (
@@ -246,20 +289,33 @@ export async function recomputeNwDaily(overrides?: {
   // asset_class='intl' (ICICI's AMFI refresh and HDFC's USD route each stamp
   // it on their own row). Same null-guard + pct formula as the MF slice; no
   // override path since two different routes feed the intl rows.
+  // Stale-aware: intl funds publish sparsely + lag, so their per-fund
+  // one_day_change_inr freezes and repeats. When even the freshest intl NAV
+  // is several days behind today, clear the stored 1D (explicit NULL, not
+  // omit — so a previously-written frozen value is wiped) rather than repeat
+  // it. The Overview card shows "— 1D · {date} (stale)" for the same reason.
+  const freshestIntlNav =
+    intlRows
+      .map((f) => f.nav_date)
+      .filter((d): d is string => !!d)
+      .sort()
+      .pop() ?? null;
+  const intlOneDayFresh =
+    freshestIntlNav != null &&
+    dayGapDays(today, freshestIntlNav) <= INTL_ONE_DAY_MAX_LAG_DAYS;
   const hasAnyIntl1D = intlRows.some((f) => f.one_day_change_inr != null);
-  const derivedIntl1dInr = hasAnyIntl1D
-    ? intlRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
-    : null;
+  const derivedIntl1dInr =
+    intlOneDayFresh && hasAnyIntl1D
+      ? intlRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
+      : null;
   const derivedIntl1dPct =
     derivedIntl1dInr != null && intlValue - derivedIntl1dInr > 0
       ? (derivedIntl1dInr / (intlValue - derivedIntl1dInr)) * 100
       : null;
-  if (derivedIntl1dInr != null) {
-    row.intl_1d_change_inr = Number(derivedIntl1dInr.toFixed(2));
-  }
-  if (derivedIntl1dPct != null) {
-    row.intl_1d_change_pct = Number(derivedIntl1dPct.toFixed(4));
-  }
+  row.intl_1d_change_inr =
+    derivedIntl1dInr != null ? Number(derivedIntl1dInr.toFixed(2)) : null;
+  row.intl_1d_change_pct =
+    derivedIntl1dPct != null ? Number(derivedIntl1dPct.toFixed(4)) : null;
   // NPS 1D — prefer explicit override (refresh-nps-nav's per-rotation
   // number), else derive from nps_state using the same formula:
   //   Σ scheme_units × (scheme_nav − scheme_nav_prev)

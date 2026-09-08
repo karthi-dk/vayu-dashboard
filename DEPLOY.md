@@ -149,12 +149,31 @@ Five routes set `maxDuration = 30` in their file headers:
 hits the cap on cold start: upgrade to Pro, optimise the route, or
 move work off the request path.
 
-### 2. Cron jobs are disabled
+### 2. Scheduled refresh — GitHub Actions (not Vercel cron)
 
-`vercel.json` no longer defines daily NAV crons because
-`middleware.ts` would 307 them to `/login`. Manual NAV refresh via
-the top-nav "NAVs" button still works. To re-enable crons see the
-comment inside `vercel.json`.
+Vercel crons aren't used (Hobby caps them, and `middleware.ts` would
+307 a cookie-less cron to `/login`). Instead, two workflows in
+`.github/workflows/` call the refresh endpoints on a schedule,
+authenticating with a shared `CRON_SECRET` bearer token that
+`middleware.ts` allow-lists for the refresh routes only:
+
+- `refresh-navs.yml` — MF + NPS + International, every 3 hours.
+- `refresh-index.yml` — index levels, hourly during market hours
+  (9am–4pm IST, Mon–Fri).
+
+**Setup (one-time):**
+
+1. Generate a secret: `openssl rand -base64 32`.
+2. Set it as `CRON_SECRET` in **Vercel** → Project → Settings →
+   Environment Variables (so the app can verify the token), then
+   redeploy.
+3. In **GitHub** → repo → Settings → Secrets and variables → Actions,
+   add repository secrets `CRON_SECRET` (same value) and `APP_URL`
+   (e.g. `https://foliopulse.vercel.app`).
+
+Manual refresh via the top-nav "NAVs" button still works regardless.
+Trigger a workflow by hand anytime from the repo's Actions tab
+("Run workflow").
 
 ## Uninstalling
 

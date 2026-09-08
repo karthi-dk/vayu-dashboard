@@ -1,6 +1,6 @@
 # Handover — current context for the next agent
 
-**Latest app release:** `0.3.0` (2026-09-03) — see **[CHANGELOG.md](./CHANGELOG.md)**  
+**Latest app release:** `0.3.1` (2026-09-08) — see **[CHANGELOG.md](./CHANGELOG.md)**  
 **Production:** https://foliopulse.vercel.app · **Vercel project:** https://vercel.com/kdeekay/foliopulse  
 **Ship path:** push `main` → Vercel production (Git integration)
 

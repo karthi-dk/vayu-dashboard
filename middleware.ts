@@ -65,6 +65,38 @@ function isPublicPath(pathname: string): boolean {
 }
 
 /**
+ * Cron / automation allow-list. A scheduled caller (GitHub Actions) hits
+ * these NAV/index refresh endpoints with no session cookie, so we let it
+ * through IFF it presents the shared CRON_SECRET as a bearer token. Scoped
+ * to the refresh routes only, and fail-closed: no CRON_SECRET configured
+ * (or a mismatch) → no bypass, the request falls through to the normal gate.
+ */
+const CRON_PATHS = [
+  "/api/refresh-mf-nav",
+  "/api/refresh-nps-nav",
+  "/api/refresh-hdfc-intl-nav",
+  "/api/refresh-index-levels",
+];
+
+// Length-checked constant-time compare — crypto.timingSafeEqual isn't in the
+// Edge runtime, so a wrong secret can't be timed out character-by-character.
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
+function isAuthorizedCron(pathname: string, req: NextRequest): boolean {
+  if (!CRON_PATHS.includes(pathname)) return false;
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const auth = req.headers.get("authorization");
+  if (!auth || !auth.startsWith("Bearer ")) return false;
+  return safeEqual(auth.slice("Bearer ".length), secret);
+}
+
+/**
  * ── Rate limit on POST /login ────────────────────────────────────────
  *
  * Sliding-window, in-memory counter keyed by client IP. Prevents an
@@ -222,6 +254,10 @@ export async function middleware(req: NextRequest) {
   }
 
   if (isPublicPath(pathname)) return passthrough();
+
+  // Scheduled NAV/index refreshes (GitHub Actions) authenticate with
+  // CRON_SECRET instead of a login cookie — let them through here.
+  if (isAuthorizedCron(pathname, req)) return passthrough();
 
   const secret = process.env.APP_SESSION_SECRET;
   if (!secret) {

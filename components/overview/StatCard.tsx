@@ -22,6 +22,7 @@ export function StatCard({
   dayChangeTitle,
   navDate,
   navStaleCount,
+  staleDayChange,
 }: {
   label: string;
   meta: string;
@@ -45,6 +46,11 @@ export function StatCard({
   navDate?: string | null;
   // Funds lagging that NAV date (FoF / intl). Shown as "(N stale)".
   navStaleCount?: number;
+  // When set and `dayChange` is null, render a muted "— 1D · {date} (stale)"
+  // marker instead of omitting the chip — used when the asset's NAV is
+  // frozen (all intl funds beyond their publish lag) so a real 1D can't be
+  // shown without repeating a stale number.
+  staleDayChange?: { navDate: string | null } | null;
 }) {
   const gradId = `spark-${label.replace(/\s+/g, "-").toLowerCase()}`;
   const changePositive = dayChange ? dayChange.inr >= 0 : true;
@@ -104,6 +110,25 @@ export function StatCard({
                       ({navStaleCount} stale)
                     </span>
                   )}
+                </span>
+              )}
+            </span>
+          )}
+          {!dayChange && staleDayChange && (
+            <span
+              className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground"
+              title="No fresh 1D — this asset's latest NAV is several days old (FoF / international publish lag), so the last daily move would just repeat. Showing the as-of date instead."
+            >
+              <span className="tabular-nums">—</span>
+              <span className="text-[10px] uppercase text-muted-foreground">
+                1D
+              </span>
+              {staleDayChange.navDate && (
+                <span className="text-[10px] text-muted-foreground">
+                  · {fmtDateShort(staleDayChange.navDate)}
+                  <span className="ml-1 text-[hsl(var(--warning))]">
+                    (stale)
+                  </span>
                 </span>
               )}
             </span>
