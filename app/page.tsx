@@ -51,6 +51,8 @@ export default async function OverviewPage() {
     fundCount,
     mfNavDate,
     mfStaleCount,
+    mfOneDayInr,
+    mfOneDayPct,
     assetSplit,
     nwDeltas,
     mfDeltas,
@@ -139,9 +141,11 @@ export default async function OverviewPage() {
   const mfSnapshot =
     latest && prev ? buildDayChange(latest.mf_value, prev.mf_value) : null;
   const mfDayChange =
-    latest?.mf_1d_change_inr != null && latest?.mf_1d_change_pct != null
-      ? { inr: latest.mf_1d_change_inr, pct: latest.mf_1d_change_pct }
-      : mfSnapshot;
+    mfOneDayInr != null && mfOneDayPct != null
+      ? { inr: mfOneDayInr, pct: mfOneDayPct }
+      : latest?.mf_1d_change_inr != null && latest?.mf_1d_change_pct != null
+        ? { inr: latest.mf_1d_change_inr, pct: latest.mf_1d_change_pct }
+        : mfSnapshot;
   // NPS: mirror MF's "persistent delta" convention. Prefer the stored
   // `nps_1d_change_inr` (written by the refresh route at each NAV
   // rotation) over a snapshot diff of nps_value between today and
@@ -246,9 +250,11 @@ export default async function OverviewPage() {
   const intlDayChange =
     international?.oneDayInr != null && international?.oneDayPct != null
       ? { inr: international.oneDayInr, pct: international.oneDayPct }
-      : latest && prev && latest.intl_value != null && prev.intl_value != null
-        ? buildDayChange(Number(latest.intl_value), Number(prev.intl_value))
-        : null;
+      : international?.oneDayStale
+        ? null
+        : latest && prev && latest.intl_value != null && prev.intl_value != null
+          ? buildDayChange(Number(latest.intl_value), Number(prev.intl_value))
+          : null;
 
   return (
     <div className="flex flex-col gap-8">
@@ -390,6 +396,9 @@ export default async function OverviewPage() {
               dayChangeSince={prevDateShort}
               navDate={international.navDate}
               navStaleCount={international.navStaleCount}
+              staleDayChange={
+                international.oneDayStale ? { navDate: international.navDate } : null
+              }
             />
           )}
           <StatCard

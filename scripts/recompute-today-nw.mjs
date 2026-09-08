@@ -107,7 +107,7 @@ async function main() {
 
   const [funds, nps, epf, existing] = await Promise.all([
     sbGet(
-      "fund_holdings?select=current_value_inr,invested_inr,cap_type,one_day_change_inr,asset_class"
+      "fund_holdings?select=current_value_inr,invested_inr,cap_type,one_day_change_inr,asset_class,nav_date"
     ),
     sbGet(
       "nps_state?select=scheme_e_units,scheme_c_units,scheme_g_units,scheme_e_nav,scheme_c_nav,scheme_g_nav,scheme_e_nav_prev,scheme_c_nav_prev,scheme_g_nav_prev&id=eq.1"
@@ -163,21 +163,57 @@ async function main() {
   const intlGainPct =
     intlInvested > 0 ? ((intlValue - intlInvested) / intlInvested) * 100 : 0;
 
-  // MF 1D derivation — same guards as lib/recomputeNwDaily.ts (MF rows only)
-  const hasAnyFund1D = mfRows.some((f) => f.one_day_change_inr != null);
-  const derivedMf1dInr = hasAnyFund1D
-    ? mfRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
+  // MF 1D derivation — stale-aware (fresh funds only), matching
+  // lib/recomputeNwDaily.ts. Counts one_day_change_inr for funds priced at
+  // the headline nav_date, over that same fresh base; a fund pending its NAV
+  // is excluded so its frozen prior-day delta can't leak in.
+  const mfNavFreq = new Map();
+  for (const f of mfRows)
+    if (f.nav_date) mfNavFreq.set(f.nav_date, (mfNavFreq.get(f.nav_date) ?? 0) + 1);
+  let mfHeadlineNavDate = null;
+  let mfNavBest = 0;
+  for (const [d, c] of mfNavFreq)
+    if (
+      c > mfNavBest ||
+      (c === mfNavBest && (mfHeadlineNavDate === null || d > mfHeadlineNavDate))
+    ) {
+      mfHeadlineNavDate = d;
+      mfNavBest = c;
+    }
+  const mfFreshRows = mfHeadlineNavDate
+    ? mfRows.filter(
+        (f) => f.nav_date === mfHeadlineNavDate && f.one_day_change_inr != null
+      )
+    : mfRows.filter((f) => f.one_day_change_inr != null);
+  const mfFreshValue = mfFreshRows.reduce(
+    (s, f) => s + Number(f.current_value_inr ?? 0),
+    0
+  );
+  const derivedMf1dInr = mfFreshRows.length
+    ? mfFreshRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
     : null;
   const derivedMf1dPct =
-    derivedMf1dInr != null && mfValue - derivedMf1dInr > 0
-      ? (derivedMf1dInr / (mfValue - derivedMf1dInr)) * 100
+    derivedMf1dInr != null && mfFreshValue - derivedMf1dInr > 0
+      ? (derivedMf1dInr / (mfFreshValue - derivedMf1dInr)) * 100
       : null;
 
-  // International 1D — Σ one_day_change_inr over intl rows.
+  // International 1D — stale-aware: clear when the freshest intl NAV is days
+  // behind today (frozen carry-forward), matching lib/recomputeNwDaily.ts.
+  const INTL_ONE_DAY_MAX_LAG_DAYS = 3;
+  const freshestIntlNav =
+    intlRows.map((f) => f.nav_date).filter(Boolean).sort().pop() ?? null;
+  const intlOneDayFresh =
+    freshestIntlNav != null &&
+    Math.round(
+      (Date.parse(`${today}T00:00:00Z`) -
+        Date.parse(`${freshestIntlNav}T00:00:00Z`)) /
+        86400000
+    ) <= INTL_ONE_DAY_MAX_LAG_DAYS;
   const hasAnyIntl1D = intlRows.some((f) => f.one_day_change_inr != null);
-  const derivedIntl1dInr = hasAnyIntl1D
-    ? intlRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
-    : null;
+  const derivedIntl1dInr =
+    intlOneDayFresh && hasAnyIntl1D
+      ? intlRows.reduce((s, f) => s + Number(f.one_day_change_inr ?? 0), 0)
+      : null;
   const derivedIntl1dPct =
     derivedIntl1dInr != null && intlValue - derivedIntl1dInr > 0
       ? (derivedIntl1dInr / (intlValue - derivedIntl1dInr)) * 100
@@ -224,8 +260,12 @@ async function main() {
   if (derivedMf1dPct != null) row.mf_1d_change_pct = Number(derivedMf1dPct.toFixed(4));
   if (derivedNps1dInr != null) row.nps_1d_change_inr = Number(derivedNps1dInr.toFixed(2));
   if (derivedNps1dPct != null) row.nps_1d_change_pct = Number(derivedNps1dPct.toFixed(4));
-  if (derivedIntl1dInr != null) row.intl_1d_change_inr = Number(derivedIntl1dInr.toFixed(2));
-  if (derivedIntl1dPct != null) row.intl_1d_change_pct = Number(derivedIntl1dPct.toFixed(4));
+  // Always include intl 1D (explicit null when frozen) so a previously-
+  // written frozen value is wiped, not preserved by the merge-upsert.
+  row.intl_1d_change_inr =
+    derivedIntl1dInr != null ? Number(derivedIntl1dInr.toFixed(2)) : null;
+  row.intl_1d_change_pct =
+    derivedIntl1dPct != null ? Number(derivedIntl1dPct.toFixed(4)) : null;
 
   const before = existing[0];
   console.log("\n── Existing today row (before) ──");
@@ -252,6 +292,9 @@ async function main() {
   console.log("\n── Proposed row (after) ──");
   console.log(`  mf_value          ${fmtInr(row.mf_value)}`);
   console.log(`  intl_value        ${fmtInr(row.intl_value)}`);
+  console.log(
+    `  intl_1d_change_inr ${row.intl_1d_change_inr == null ? "NULL (frozen — cleared)" : fmtInr(row.intl_1d_change_inr)}`
+  );
   console.log(`  total_nw          ${fmtInr(row.total_nw)}`);
   console.log(`  mf_invested       ${fmtInr(row.mf_invested)}`);
   console.log(

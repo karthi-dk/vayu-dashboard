@@ -4,6 +4,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 // scoped one — see lib/supabase.ts. If you're reading this in a
 // client component, you shouldn't be: this file is server-only.
 import { sbServer as sb } from "./supabase";
+import { istDate } from "./istDate";
 import { computeXirr, type CashFlow } from "./xirr";
 import { buildEpfHistory, type EpfDailyRow } from "./epf/epfHistory";
 import { buildNwHistory, type NwPoint } from "./nwReconstruct";
@@ -619,6 +620,10 @@ export type InternationalSummary = {
   oneDayPct: number | null;
   navDate: string | null;
   navStaleCount: number;
+  /** True when the 1D is suppressed because the freshest intl NAV is days
+   *  old (the stored delta would just repeat). The card shows "— 1D · {date}
+   *  (stale)" instead of a frozen number. */
+  oneDayStale: boolean;
   funds: IntlFundDetail[];
 };
 
@@ -696,6 +701,10 @@ export type OverviewData = {
    * "(N stale)" hint next to the MF card's NAV date.
    */
   mfStaleCount: number;
+  /** Stale-aware MF 1D (Overview card): excludes funds still pending their
+   *  NAV so a frozen prior-day delta doesn't leak in. Null pre-first-sync. */
+  mfOneDayInr: number | null;
+  mfOneDayPct: number | null;
   lastSync: string | null;
   config: ConfigMap;
   assetSplit: AssetSplit | null;
@@ -2203,6 +2212,29 @@ export async function getOverviewData(): Promise<OverviewData> {
     ? mfFunds.filter((f) => f.nav_date != null && f.nav_date < mfNavDate).length
     : 0;
 
+  // Stale-aware MF 1D for the Overview card. Sum one_day_change_inr over
+  // funds priced AT the headline nav_date, over that same fresh base. A
+  // fund still pending its NAV (e.g. PPFAS) carries a frozen prior-day
+  // delta — counting it injects a wrong-day move and dilutes the % against
+  // its full value; excluding it from BOTH delta and base matches the
+  // "(N stale)" pill the card already shows.
+  const mfFreshFunds = mfNavDate
+    ? mfFunds.filter(
+        (f) => f.nav_date === mfNavDate && f.one_day_change_inr != null
+      )
+    : mfFunds.filter((f) => f.one_day_change_inr != null);
+  const mfFreshCurrent = mfFreshFunds.reduce(
+    (s, f) => s + (f.current_value_inr ?? 0),
+    0
+  );
+  const mfOneDayInr = mfFreshFunds.length
+    ? mfFreshFunds.reduce((s, f) => s + (f.one_day_change_inr ?? 0), 0)
+    : null;
+  const mfOneDayPct =
+    mfOneDayInr != null && mfFreshCurrent - mfOneDayInr > 0
+      ? (mfOneDayInr / (mfFreshCurrent - mfOneDayInr)) * 100
+      : null;
+
   // Asset allocation (Equity vs Debt) — see AssetSplit type for bucket
   // definitions. Uses `cap_type` on fund_holdings as the sole classifier:
   // 'debt' → Debt bucket, anything else → Equity bucket. Rows with null
@@ -2318,6 +2350,15 @@ export async function getOverviewData(): Promise<OverviewData> {
           dayGap(intlNavDate, f.navDate) > INTL_STALE_TOLERANCE_DAYS
       ).length
     : 0;
+  // Even the freshest intl NAV can be days old (FoF / UCITS feeders publish
+  // sparsely + lag). When it falls this far behind the latest data date, the
+  // stored intl_1d is a frozen carry-forward (the same delta repeats daily),
+  // so the card should show "— 1D · {date} (stale)" rather than a stale move.
+  const INTL_ONE_DAY_MAX_LAG_DAYS = 3;
+  const intlOneDayFresh =
+    intlNavDate != null &&
+    latest?.date != null &&
+    dayGap(latest.date, intlNavDate) <= INTL_ONE_DAY_MAX_LAG_DAYS;
   const international: InternationalSummary | null = intlFundDetails.length
     ? {
         value: latest?.intl_value ?? intlValueSum,
@@ -2327,10 +2368,11 @@ export async function getOverviewData(): Promise<OverviewData> {
           (intlInvestedSum > 0
             ? ((intlValueSum - intlInvestedSum) / intlInvestedSum) * 100
             : 0),
-        oneDayInr: latest?.intl_1d_change_inr ?? null,
-        oneDayPct: latest?.intl_1d_change_pct ?? null,
+        oneDayInr: intlOneDayFresh ? (latest?.intl_1d_change_inr ?? null) : null,
+        oneDayPct: intlOneDayFresh ? (latest?.intl_1d_change_pct ?? null) : null,
         navDate: intlNavDate,
         navStaleCount: intlStaleCount,
+        oneDayStale: intlFundDetails.length > 0 && !intlOneDayFresh,
         funds: intlFundDetails,
       }
     : null;
@@ -2350,6 +2392,8 @@ export async function getOverviewData(): Promise<OverviewData> {
     fundCount: mfFunds.length,
     mfNavDate,
     mfStaleCount,
+    mfOneDayInr,
+    mfOneDayPct,
     lastSync: lastSyncRes.error
       ? null
       : (lastSyncRes.data as { updated_at: string } | null)?.updated_at ?? null,
@@ -3087,13 +3131,37 @@ export async function getPortfolioData(): Promise<PortfolioData> {
   // headline gain would be nonsense (ex-intl value − incl-intl invested).
   const mfFundRows = fundRows.filter((f) => f.asset_class !== "intl");
   const invested = mfFundRows.reduce((s, f) => s + (f.invested_inr ?? 0), 0);
-  const oneDayFunds = mfFundRows.filter((f) => f.one_day_change_inr != null);
+  // Stale-aware 1D: count only funds priced at the headline nav_date, over
+  // that same fresh base, so a fund still pending its NAV doesn't inject a
+  // frozen prior-day delta. Mirrors getOverviewData + the "(N stale)" pill.
+  const mfHeadlineNavDate = ((): string | null => {
+    const freq = new Map<string, number>();
+    for (const f of mfFundRows)
+      if (f.nav_date) freq.set(f.nav_date, (freq.get(f.nav_date) ?? 0) + 1);
+    let best: string | null = null;
+    let bestCount = 0;
+    for (const [d, c] of freq)
+      if (c > bestCount || (c === bestCount && (best === null || d > best))) {
+        best = d;
+        bestCount = c;
+      }
+    return best;
+  })();
+  const oneDayFunds = mfHeadlineNavDate
+    ? mfFundRows.filter(
+        (f) => f.nav_date === mfHeadlineNavDate && f.one_day_change_inr != null
+      )
+    : mfFundRows.filter((f) => f.one_day_change_inr != null);
+  const oneDayBase = oneDayFunds.reduce(
+    (s, f) => s + (f.current_value_inr ?? 0),
+    0
+  );
   const oneDayInr = oneDayFunds.length
     ? oneDayFunds.reduce((s, f) => s + (f.one_day_change_inr ?? 0), 0)
     : null;
   const oneDayPct =
-    oneDayInr != null && mfTotal - oneDayInr > 0
-      ? (oneDayInr / (mfTotal - oneDayInr)) * 100
+    oneDayInr != null && oneDayBase - oneDayInr > 0
+      ? (oneDayInr / (oneDayBase - oneDayInr)) * 100
       : null;
   const gainInr = mfTotal - invested;
   const gainPct = invested > 0 ? (gainInr / invested) * 100 : 0;
@@ -3112,7 +3180,25 @@ export async function getPortfolioData(): Promise<PortfolioData> {
   const totalCurrent = mfTotal + intlValue;
   const totalGainInr = totalCurrent - totalInvested;
   const totalGainPct = totalInvested > 0 ? (totalGainInr / totalInvested) * 100 : 0;
-  const intlOneDayRows = intlRows.filter((f) => f.one_day_change_inr != null);
+  // Suppress the intl 1D when its freshest NAV is frozen (days old) — same
+  // rule as the Overview card, so the "Total" chip doesn't fold in a stale
+  // repeating delta.
+  const freshestIntlNav =
+    intlRows
+      .map((f) => f.nav_date)
+      .filter((d): d is string => !!d)
+      .sort()
+      .pop() ?? null;
+  const intlOneDayFresh =
+    freshestIntlNav != null &&
+    Math.round(
+      (Date.parse(`${istDate()}T00:00:00Z`) -
+        Date.parse(`${freshestIntlNav}T00:00:00Z`)) /
+        86_400_000
+    ) <= 3;
+  const intlOneDayRows = intlOneDayFresh
+    ? intlRows.filter((f) => f.one_day_change_inr != null)
+    : [];
   const intlOneDayInr = intlOneDayRows.reduce(
     (s, f) => s + (f.one_day_change_inr ?? 0),
     0
