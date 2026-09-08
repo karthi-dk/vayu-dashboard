@@ -2,28 +2,38 @@ name: Refresh NAVs
 
 on:
   schedule:
-    # Every day at 6:30 PM IST (13:00 UTC) — after market close
-    - cron: '0 13 * * 1-5'
-  workflow_dispatch:
+    - cron: "0 */3 * * *" # every 3 hours (UTC)
+  workflow_dispatch: {}
+
+concurrency:
+  group: refresh-navs
+  cancel-in-progress: false
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - name: Refresh MF NAV
+      - name: Refresh MF / NPS / International NAVs
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.APP_URL }}/api/refresh-mf-nav"
-
-      - name: Refresh NPS NAV
-        run: |
-          curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.APP_URL }}/api/refresh-nps-nav"
-
-      - name: Refresh HDFC Intl NAV
-        run: |
-          curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.APP_URL }}/api/refresh-hdfc-intl-nav"
+          set -euo pipefail
+          if [ -z "${APP_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::APP_URL and CRON_SECRET repo secrets must be set."
+            exit 1
+          fi
+          fail=0
+          for path in refresh-mf-nav refresh-nps-nav refresh-hdfc-intl-nav; do
+            code=$(curl -sS -m 60 --retry 2 --retry-delay 5 \
+              -o /tmp/out.json -w "%{http_code}" \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              "${APP_URL}/api/${path}") || code="000"
+            echo "== ${path} -> HTTP ${code} =="
+            head -c 400 /tmp/out.json 2>/dev/null || true; echo
+            if [ "${code}" != "200" ]; then
+              echo "::error::${path} returned ${code}"
+              fail=1
+            fi
+          done
+          exit "${fail}"
