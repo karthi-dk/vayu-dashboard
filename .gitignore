@@ -18,6 +18,7 @@ next-env.d.ts
 
 # OS / editor
 .DS_Store
+__MACOSX/
 Thumbs.db
 *.swp
 *.swo
