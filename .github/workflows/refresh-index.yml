@@ -2,16 +2,31 @@ name: Refresh Index Levels
 
 on:
   schedule:
-    # Every day at 6:30 PM IST (13:00 UTC) — after market close
-    - cron: '10 13 * * 1-5'
-  workflow_dispatch:
+    - cron: "30 3-10 * * 1-5" # hourly 9am–4pm IST, Mon–Fri (UTC 03:30–10:30)
+  workflow_dispatch: {}
+
+concurrency:
+  group: refresh-index
+  cancel-in-progress: false
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - name: Refresh Index Levels
+      - name: Refresh index levels
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.APP_URL }}/api/refresh-index-levels"
+          set -euo pipefail
+          if [ -z "${APP_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::APP_URL and CRON_SECRET repo secrets must be set."
+            exit 1
+          fi
+          code=$(curl -sS -m 60 --retry 2 --retry-delay 5 \
+            -o /tmp/out.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/refresh-index-levels") || code="000"
+          echo "== refresh-index-levels -> HTTP ${code} =="
+          head -c 400 /tmp/out.json 2>/dev/null || true; echo
+          test "${code}" = "200"
