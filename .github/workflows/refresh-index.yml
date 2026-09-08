@@ -2,7 +2,8 @@ name: Refresh Index Levels
 
 on:
   schedule:
-    - cron: "30 3-10 * * 1-5" # hourly 9am–4pm IST, Mon–Fri (UTC 03:30–10:30)
+    - cron: "30 3-10 * * 1-5" # Indian market hours (9am–4pm IST)
+    - cron: "0 13-21 * * 1-5" # US market hours (~7pm–2:30am IST)
   workflow_dispatch: {}
 
 concurrency:
